@@ -1,0 +1,18 @@
+[package]
+name = "rhytido-backend"
+description = "Rhytido numerical backend facade: arbitrary-precision floats, integers, rationals, and intervals over a swappable trusted library."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+dashu-float = { workspace = true }
+dashu-int = { workspace = true }
+dashu-ratio = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
