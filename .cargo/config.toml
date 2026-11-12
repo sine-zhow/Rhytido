@@ -1,0 +1,5 @@
+# No special cargo config is required; dependencies are locked in Cargo.lock.
+# Note: inside the DSH sandbox, Windows schannel TLS is blocked
+# (SEC_E_NO_CREDENTIALS). Use `cargo --offline` for cached builds, or run with
+# full access when fetching new dependencies. This cargo's libcurl is
+# schannel-only, so http.ssl-backend is not supported.
