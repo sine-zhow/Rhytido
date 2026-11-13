@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rhytido-backend", "crates/rhytido-core"]
+members = ["crates/rhytido-backend", "crates/rhytido-core", "crates/rhytido-lang"]
 
 [workspace.package]
 version = "0.0.1"
@@ -16,6 +16,7 @@ dashu-int = "0.6"
 dashu-ratio = "0.6"
 thiserror = "2"
 rhytido-backend = { path = "crates/rhytido-backend" }
+rhytido-core = { path = "crates/rhytido-core" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

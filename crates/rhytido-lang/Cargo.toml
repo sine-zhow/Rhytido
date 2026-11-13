@@ -1,0 +1,18 @@
+[package]
+name = "rhytido-lang"
+description = "Rhytido language layer (L4): composite values, symbol interning, and the frame-stack dynamic-scope session."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["computer-algebra", "numerics", "symbolic", "language"]
+categories = ["mathematics", "development-tools"]
+
+[dependencies]
+rhytido-backend = { workspace = true }
+rhytido-core = { workspace = true }
+
+[lints]
+workspace = true

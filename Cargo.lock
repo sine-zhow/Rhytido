@@ -107,6 +107,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rhytido-lang"
+version = "0.0.1"
+dependencies = [
+ "rhytido-backend",
+ "rhytido-core",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
