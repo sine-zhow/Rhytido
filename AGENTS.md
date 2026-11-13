@@ -10,6 +10,8 @@
 
 Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求值 + 认证多项式逼近 + 认证范数 + libm 代码/证明生成）。当前处于**实施阶段**（计划已获批准；M0–M2 已完成并验收，M3 待启动）。
 
+> **新会话交接（开工必读）**：`docs/review/session-handoff.md` —— 当前状态 / 环境坑（PATH、--offline、沙箱管道 workaround）/ 443 推送配方 / 已验证工作流 / subagent 上下文耗尽教训 / 下一步 M3-A。
+
 **硬性护栏**（违反即停；括号内为正向目标）：
 - **净室**：不复制 Sollya 任何源码或表达（从公开规格、论文、行为测试独立实现；§6）。
 - **批准前不写实现代码**（先完成计划批准；本文件等规范文档除外）。
@@ -173,6 +175,7 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
 
 ## 8. 参考指针（按需查阅）
 
+- **新会话交接（开工必读）**：`docs/review/session-handoff.md`。
 - **需求/架构/路线/许可**：`docs/plan/01-requirements.md`、`02-architecture.md`、`03-roadmap.md`、`04-license-and-cleanroom.md`。
 - **测试分层细则与迁移台账**：`docs/plan/05-testing.md`。
 - **Subagent 评估台账与经验总结（滚动更新）**：`docs/review/subagent-retrospective.md`。
