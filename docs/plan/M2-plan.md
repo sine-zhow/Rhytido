@@ -7,8 +7,8 @@
 | 阶段 | 状态 | 证据 |
 |---|---|---|
 | M2-A 函数族补齐 | ✅ 完成 | backend 178 / workspace **271 全绿**（基线 210 零丢失 + 61）；fmt/clippy EXIT=0；严格 π 界 + 精确格点判定抽查合格 |
-| M2-B erf/erfc | ⏳ 待启动 | 设计已就绪 docs/research/erf-erfc-design.md |
-| M2-C 区间求值 + Ziv 引擎 | ⏳ 待启动 | 依赖 A（已就绪） |
+| M2-B erf/erfc 自研 | ✅ 完成 | backend 226 / workspace **319 全绿**（零丢失 +48：erf 单元 18 + 模块 27 + doctest 3）；6 公开常数首跑全过 + 独立 Simpson oracle 交叉验证 ~19–22 位；fmt/clippy EXIT=0；lead 抽查 Bracket/series_bound/阈值链合格 |
+| M2-C 区间求值 + Ziv 引擎 | 🚀 进行中（subagent 已派发） | 契约见 M2-stage2-tasks.md §任务 C |
 | M2-D autodiff + Taylor | ⏳ 待启动 | |
 | M2-E Display 往返 + 验收 | ⏳ 待启动 | |
 

@@ -19,14 +19,14 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
 - **测试门禁**：只有测试过的代码才能使用与合并；每个函数/类型/trait 完成即跑全部测试（正常/极端/异常报错/异常中断，§4）。
 - **语义契约**不可"优化掉"：动态作用域、error 一等值、符号回退、8 态质量证书（§3）。
 
-**工具链**：edition 2024；MSRV **1.86**（lalrpop 0.23 要求）；stable 编译 + **nightly rustfmt**（导入分组需 nightly，`cargo +nightly fmt`）。
+**工具链**：edition 2024；MSRV **1.86**（lalrpop 0.23 要求）；**stable 工具链即可运行全部门禁**（本机 scoop rust 无 nightly；rustfmt.toml 仅启用 stable 选项，若日后启用 `group_imports` 等 nightly-only 选项再要求 `cargo +nightly fmt` 并同步 CI）。
 
 ## 1. 工作流程（每步有完成判据）
 
 1. **定位**：读 `docs/plan/03-roadmap.md` 确认当前里程碑与任务，读对应需求（01）与架构（02）。*判据：能说出本任务属哪个里程碑、验收标准是什么。*
 2. **实现**：按 §2 风格与 §3 架构纪律写代码。*判据：功能满足对应需求条目。*
 3. **测试**：每完成一个函数/类型(struct/enum)/trait，即补并跑**全部**测试——正常/极端/异常报错/异常中断广覆盖（§4）。*判据：该单元各类用例齐备且 `cargo test` 全绿；未测代码不得进入下一步。*
-4. **格式化与 lint**：`cargo +nightly fmt` + `cargo clippy --all-targets -- -D warnings`。*判据：fmt 无 diff，clippy 零警告。*
+4. **格式化与 lint**：`cargo fmt`（stable，按 rustfmt.toml；启用 nightly-only 选项后改 `cargo +nightly fmt`）+ `cargo clippy --all-targets -- -D warnings`。*判据：fmt 无 diff，clippy 零警告。*
 5. **提交**：按 §5 Conventional Commits。*判据：信息合规、原子化。*
 6. **评审与合并**：小 PR + 互审（§5）；**只有测试全绿的代码才能合并**。*判据：同伴 approve + 测试门禁通过。*
 
@@ -138,7 +138,7 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
   - 运行：`cargo test --workspace`（全部层）；`cargo test --lib`（仅单元）；`cargo test --tests`（模块+集成）。
 - 属性测试（区间包含性、证书一致性、Sturm 根计数、remez 交替性）；后端差分测试（rug vs dashu）。
 - **字节级**：移植 Sollya 脚本语料，`diff` 全量 stdout；先复现怪癖/bug，后修复并更新 reference。
-- **门禁**：`cargo test` 全绿 + `cargo clippy --all-targets -- -D warnings` 零警告 + `cargo +nightly fmt --check` 无 diff。
+- **门禁**：`cargo test` 全绿 + `cargo clippy --all-targets -- -D warnings` 零警告 + `cargo fmt --check` 无 diff（stable；nightly-only 选项启用后相应升级）。
 - 性能：关键算子基准对标 Sollya，防退化；先正确后快。
 - unsafe 处 Miri（可行处）+ 模糊测试。
 
@@ -165,10 +165,15 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
 - 派发前明确任务边界与完成判据；subagent 产出由派发者**复核**（风格/契约/测试）后才采纳。
 - subagent 不得自行做许可证/架构取向决策；此类决策升级给人类。
 - 只读调研类 subagent 同样遵守净室与引用规范（一手来源、标注已核实/待验证）。
+- **派发提示词必备条款**（实证教训，docs/review/subagent-retrospective.md）：① 执行纪律——从第一个工具调用起顺序推进，**严禁以计划/意图文本结束回合**，结束前交付物必须落盘并通过门禁，无法完成须列"已落盘/未完成"清单；② 证据式报告——git status --short 真实输出、分层测试计数、门禁退出码；③ 探针/临时文件须在最终报告前删除；④ 提示词完全自包含（subagent 结束后**不可续作**，send_message 无法送达）。
+- **验收协议（硬性）**：派发者不以 subagent 自报为事实，独立取证后方可采纳：git status（检测零输出静默终止与游离文件）→ 分层重计数 → 三门禁（test/clippy/fmt）→ 关键实现抽查阅读。
+- **失败处理**：静默终止/零输出 → 先 git 取证，再重派（重派提示词写明上次失败模式与纪律条款）；同一任务连续两次失败 → lead 亲自实现或拆小任务，不空转重派。
+- **调度约束**：共享 target 目录或源码依赖的任务（如同一 workspace 的 backend/core）**串行**派发，避免门禁互相污染；写作用域互不重叠是并行的前提。
 
 ## 8. 参考指针（按需查阅）
 
 - **需求/架构/路线/许可**：`docs/plan/01-requirements.md`、`02-architecture.md`、`03-roadmap.md`、`04-license-and-cleanroom.md`。
 - **测试分层细则与迁移台账**：`docs/plan/05-testing.md`。
+- **Subagent 评估台账与经验总结（滚动更新）**：`docs/review/subagent-retrospective.md`。
 - **研究/生态/许可证矩阵**：`docs/research/sollya-port-research.md`。
 - **权威外部规范**：Rust API Guidelines、Rust Style Guide、Conventional Commits、rustfmt、Clippy、Rust Unsafe Code Guidelines（链接见文件头）。
