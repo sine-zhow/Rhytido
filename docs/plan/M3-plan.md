@@ -33,8 +33,8 @@
 | 任务 | 内容 | 写作用域 | 依赖 |
 |---|---|---|---|
 | **M3-A** ✅ 值/Context 地基（2026-11-13 完成） | 值类型（core 原子 Atom + lang Value/列表；**proc/function 表示延后 B1**——body 依赖语法树，行为解释器本属 M3-D）+ 帧栈动态作用域 Session + 设置骨架；D1/D2/D3 已定（ADR-9/10/11）；四类测试 | core + lang 骨架 | M2 |
-| **M3-B1** 词法+表达式文法 | lalrpop 接入 + lexer + 数学表达式/常数/基函数/优先级文法→AST；解析单测 | lang | A |
-| **M3-B2** 命令/语句文法 | 赋值/设置/print/块/过程语法文法；解析单测 | lang | B1 |
+| **M3-B1** ✅ 词法+表达式文法（2026-11-13 完成，f51bb59） | lalrpop 0.23.2 接入 + **内置 lexer** + 数学表达式/常数/基函数/优先级文法 → core AST；parse_expr+ParseError；往返集成测试。**proc/function 值表示实际落位 B2**（其 body=命令/过程 AST，属 B2 产物；B1 仅数学文法，与行内"表达式文法"范围一致） | lang | A |
+| **M3-B2** 命令/语句文法 | 赋值/设置/print/块/过程语法文法 + **语句/proc AST 与 Value::Proc/Function 表示落地**（ADR-9：body 需语法树，原拟 B1、实归 B2）；解析单测 | lang | B1 |
 | **M3-B3** match/控制流+迷你/内部模式 | 模式/控制流文法 + mini/internal 解析入口；解析单测 | lang | B2 |
 | **M3-C** 动态作用域求值器 | 表达式调度 core 引擎、命令求值、变量查找、error 传播、符号回退；语义测试 | lang | B3 |
 | **M3-D** match + proc/变长 | match 解释器（字符串/列表切割）+ proc 应用/变长/return/void；语义测试 | lang | C |
@@ -43,6 +43,22 @@
 
 - **Rust 优化要点**（按任务摘取）：A/B/C 用 B2 记忆化、B1 减少 clone、A3 精确判定；求值器 C 用 B3 避免重复求值、B4 早停；interning 结构共享（ADR-1）。正确性优先（动态作用域/error 契约不可为性能牺牲）。
 - **上下文预算**：B 拆 B1/B2/B3 三段增量构建同一 lalrpop 文法（串行、每段可编译可测）；每任务"实现+测试+门禁"一次交付，若体量大再拆"实现/收尾"。
+
+### 3.1 B1 实证与未决项（2026-11-13，lead 验收时录）
+
+**lalrpop 0.23.2 接入实证**（B2/B3 直接复用，勿再踩）：
+- `.lalrpop` 文件必须显式 `grammar;` 头（0.23 起，否则首 token 报 unexpected token）。
+- 内置 lexer：禁显式 `'input` 生命周期；lalrpop-util 需 `features=["lexer"]`；文法头状态参数可穿 `&mut Interner`（引用本身 Copy）。
+- `lalrpop_mod!` 生成模块需 `#[allow(missing_docs, clippy::all, unused_imports, dead_code)]`（workspace 级 lint 会命中生成码）。
+- 动作代码避免 turbofish；`ParseError<usize, lexer::Token<'_>, &'static str>` → 本地 thiserror 五变体（带字节位置）映射模式已立。
+- 空白-only 输入的 UnrecognizedEof.location=最后 token 末尾偏移（无 token 时 0），非源长度。
+- 编译时长：首次接入=全依赖链冷编译（分钟级，一次性）；其后 lang 增量 check/test 秒级。生成码规模：单入口 ~2.8K 行。
+- 零全局合规先例：thread_local 仅缓存**无状态**生成解析器（regex 编译复用），语义状态全走参数穿线。
+
+**未决蒸馏项**（勿臆测实现）：
+- 字面量：`0x/0b/0o` 进制与 `@` 比例、数字下划线分组；`inf/infinity` 与小写 `nan` 拼写（现仅 `NaN`）——待 B2/B3 从公开手册蒸馏。
+- **常量字面量精度政策**：backend FromStr 取 `max(165, digits·10/3+1)`，打印 51 位 → 非二进十进制经 print→parse 的 NodeId 不恒等（值级恒等已测）。B1 裁决：不擅改 core；求值层如何规范化常量精度，随 **M3-C** 参考行为蒸馏定夺（涉语义契约，必要时 ADR 升级人类）。
+- 打印器左嵌套幂非单射：`(a^b)^c` 打印为 `a^b^c`，parse 归右结合（典范性无碍）；若需修 core 打印器加括号，**先蒸馏参考打印行为**再动（表现层属字节级兼容域）。
 
 ## 4. 调度与验收
 
