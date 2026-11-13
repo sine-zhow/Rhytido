@@ -40,6 +40,7 @@
 - **M2 阶段更新（2026-11-13，lead 复核）**：M2-A +61、M2-B +48（erf 单元 18 / erf 模块 27 / doctest +3）。现状 backend：单元 42 / 模块 141（integer 14、bigfloat 61、rational 14、interval 35、format 10、error 7、erf 27）/ 集成 8 / doctest 8 = **226**；core 93 不变；**workspace 319 全绿，基线零丢失**。
 - **M2-C 更新（2026-11-13，lead 独立验收）**：+140（backend +23：next_* 单元 6 / bigfloat 模块 +15 / doctest +2；core +117：单元 +41、faithful 27、interval_eval 24、integration_engine 15、eval +3、expr +2、print +2、doctest +3）。现状 backend：单元 48 / 模块 156 / 集成 8 / doctest 10 = **249**；core：单元 50 / 模块 133 / 集成 22 / doctest 3 = **210**；**workspace 459 全绿，基线零丢失**。lead 收尾修复：8 处 approx_constant 以值恒等 std 常量替换（断言不弱化）、fmt 一处、游离基线日志删除。
 - **M2-D 更新（2026-11-13，lead 独立验收）**：+50（core：diff 模块 14、taylor 模块 15、faithful 模块 +6、faithful 单元 +7、context 模块 +6、doctest +2；backend 249 不变）。现状 core：单元 57 / 模块 176 / 集成 22 / doctest 5 = **260**；**workspace 509 全绿，基线零丢失**。收尾者实测发现并修复前任 Taylor 包含性漏洞（可去奇点 0·x⁻¹ 跨零→NaN，逐层回退 naive），专项测试钉住。
+- **M2-E1 更新（2026-11-13，lead 独立验收）**：+6（backend bigfloat 模块 76→82 往返属性；core 260 无扰）。现状 backend **255**（单元 48 / 模块 189 / 集成 8 / doctest 10）；**workspace 515 全绿，基线零丢失**。Display 往返修复（§4b 怪癖收口）+ 解除 ≤15 位限制恢复全精度交叉核对（加强非弱化）。
 
 ## 4. 验收证据（集中门禁，lead 实测）
 
@@ -50,7 +51,7 @@
 
 ## 4b. 迁移中发现的既有问题（非本次引入）
 
-- **BigFloat Display 精度怪癖**：`to_decimal` 按值精度渲染，53 位精度下十进制仅约 15 位有效数字——`(2^53−1).round_to_format(Double, Nearest).to_string()` 为 "9007199254740990"，但数值本身精确等于 2^53−1（数值断言通过）。列 M2 精化（显示应给出可往返的足够位数）；集成测试现将 Display 交叉核对限于 ≤15 位有效数字，数值断言覆盖全值域。
+- **BigFloat Display 精度怪癖【已修复 M2-E1】**：原 `to_decimal` 按值精度渲染，53 位精度下十进制仅约 15 位有效数字——`(2^53−1)` 曾显示 "9007199254740990"。**M2-E1 已修复**：Display 改用 `with_base_and_precision::<10>(ceil(p·log10(2))+1)` 显式给足往返位数（53→17 位、165→51 位），`(2^53−1)` 现显示 "9007199254740991"；FromStr 配套 `max(165, D·10/3+1)` 保 parse 半边（短字面量行为不变）。集成测试 ≤15 位限制已解除、恢复全值域/全精度交叉核对（加强非弱化）。±0 基线渲染 -0→"0" 原样保留（值恒等往返成立）。
 
 ## 5. 后续约定
 

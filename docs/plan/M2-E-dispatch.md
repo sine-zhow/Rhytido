@@ -39,6 +39,12 @@ D 完成后 workspace 计数会变化；E1 派发前 lead 重跑 `cargo test --w
 
 **测试**：tests/expr.rs、print.rs、eval.rs、interval_eval.rs、diff.rs、taylor.rs、faithful.rs 各追加四类（新函数求值/打印/区间包含/导数/非光滑回退）；集成 tests/integration_engine.rs 追加新函数管线。**非光滑 Taylor 回退必须有专门包含性测试**（跨整数/半整数/零/舍入边界）。既有断言不弱化。
 
+**参考项目行为规格（lead 从 reference/sollya/doc/*.tex 公开文档蒸馏；净室——行为规格非源码，subagent 据此独立实现）**：
+- 实函数：log2(x)=log₂x、log10(x)=log₁₀x（域 x>0；x=0→−∞、x<0→NaN）；log1p(x)=ln(1+x) 小 x 精确（域 [−1,+∞]，log1p(−1)=−∞、x<−1→NaN）；expm1(x)=eˣ−1 小 x 精确（全域，expm1(0)=0）；abs(x)=|x|；ceil/floor=上/下取整；nearestint=最近整数 **ties-to-even**（全域，阶梯函数）。
+- 格式转换（均最近舍入、支持次正规）：double/D=binary64、single=binary32、halfprecision=binary16、quad=binary128、**doubleextended/DE=64-bit 尾数 + 15-bit 指数（binary79-like，含次正规；非 Intel x87 伪 denormal 行为）**。分派到 backend `round_to_format(Format::…)`；**须核对 Format::DoubleExtended 确为 64-bit 尾数**。
+- 打印名：log2/log10/log1p/expm1/abs/ceil/floor/nearestint/double/single/halfprecision/quad/doubleextended；Ln 保持 "ln"（log 别名属 M3 解析层）。
+- **Rust 优化要点**（docs/research/rust-numerical-optimization.md，正确性优先）：A3 精确整数算术（取整/格式判定用 canonical_parts，避免浮点误判）、A5 包含性回退、B2 记忆化、B1 减少 clone；格式转换/取整是精确操作，勿引入无谓舍入。
+
 **门禁**：`cargo test --workspace`（基线零丢失+新增）、clippy workspace -D warnings EXIT=0、只读 rustfmt --check。写作用域 crates/rhytido-core/**（如确需 backend 加法，单列报告由 lead 裁决）。
 
 ---

@@ -166,7 +166,7 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
 - 派发前明确任务边界与完成判据；subagent 产出由派发者**复核**（风格/契约/测试）后才采纳。
 - subagent 不得自行做许可证/架构取向决策；此类决策升级给人类。
 - 只读调研类 subagent 同样遵守净室与引用规范（一手来源、标注已核实/待验证）。
-- **派发提示词必备条款**（实证教训，docs/review/subagent-retrospective.md）：① 执行纪律——从第一个工具调用起顺序推进，**严禁以计划/意图文本结束回合**，结束前交付物必须落盘并通过门禁，无法完成须列"已落盘/未完成"清单；② 证据式报告——git status --short 真实输出、分层测试计数、门禁退出码；③ 探针/临时文件须在最终报告前删除；④ 提示词完全自包含（subagent 结束后**不可续作**，send_message 无法送达）；⑤ **上下文预算**——任务体量须与 subagent 上下文匹配，过大则拆小；对注入的纪律提醒极简响应（§1.1），严禁每轮冗长样板确认（M2-D 实证因此 "ran out of room"）；cargo/git 若被沙箱拒绝管道输出，改用 run_in_background 或提权，**不在受限模式反复重试同一条被拒命令**；⑥ **上下文 sink 规避（四类实证思考循环，事件流取证）**：(a) **增量落盘**——边设计边写文件并编译，严禁把整个实现囤在 reasoning 里一次性推导（#4 末条消息 13K token 在思考里设计完整个 erf.rs 却零落盘即耗尽）；(b) **探针极简**——探针只做一次性实证，需 >2–3 轮修编译错即弃用、改以真实测试验证，勿让探针沦为 edit→run→error 调试黑洞（#6 后端+核心两度探针循环耗尽）；(c) **测试追因有界**——同一 panic/错误反复出现即识别为已知边界（如 dashu `precision cannot be 0`）并针对性处理，不无限 run→diagnose→run（#7 追该 panic 循环耗尽）；(d) **样板极简**（§1.1，#8 每轮冗长 URL 确认耗尽）。
+- **派发提示词必备条款**（实证教训，docs/review/subagent-retrospective.md）：① 执行纪律——从第一个工具调用起顺序推进，**严禁以计划/意图文本结束回合**，结束前交付物必须落盘并通过门禁，无法完成须列"已落盘/未完成"清单；② 证据式报告——git status --short 真实输出、分层测试计数、门禁退出码；③ 探针/临时文件须在最终报告前删除；④ 提示词完全自包含（subagent 结束后**不可续作**，send_message 无法送达）；⑤ **上下文预算**——任务体量须与 subagent 上下文匹配，过大则拆小；对注入的纪律提醒极简响应（§1.1），严禁每轮冗长样板确认（M2-D 实证因此 "ran out of room"）；cargo/git 若被沙箱拒绝管道输出，改用 run_in_background 或提权，**不在受限模式反复重试同一条被拒命令**；⑥ **上下文 sink 规避（四类实证思考循环，事件流取证）**：(a) **增量落盘**——边设计边写文件并编译，严禁把整个实现囤在 reasoning 里一次性推导（#4 末条消息 13K token 在思考里设计完整个 erf.rs 却零落盘即耗尽）；(b) **探针极简**——探针只做一次性实证，需 >2–3 轮修编译错即弃用、改以真实测试验证，勿让探针沦为 edit→run→error 调试黑洞（#6 后端+核心两度探针循环耗尽）；(c) **测试追因有界**——同一 panic/错误反复出现即识别为已知边界（如 dashu `precision cannot be 0`）并针对性处理，不无限 run→diagnose→run（#7 追该 panic 循环耗尽）；(d) **样板极简**（§1.1，#8 每轮冗长 URL 确认耗尽）；⑦ **参考项目上下文 + Rust 优化**：派发提示词须含 (a) 由 lead 从参考项目**公开行为/文档蒸馏**的本任务**具体行为规格**——函数语义、定义域/边界、期望输出、特殊值、证书/精度要求（净室：给行为规格而非源码，subagent 据此独立实现、不复制表达）；(b) 与本任务相关的**正确且高效的 Rust 技巧**——引用 `docs/research/rust-numerical-optimization.md` 并按任务摘取要点写入提示词（正确性优先、再谈效率）。
 - **验收协议（硬性）**：派发者不以 subagent 自报为事实，独立取证后方可采纳：git status（检测零输出静默终止与游离文件）→ 分层重计数 → 三门禁（test/clippy/fmt）→ 关键实现抽查阅读。
 - **失败处理**：静默终止/零输出 → 先 git 取证，再重派（重派提示词写明上次失败模式与纪律条款）；同一任务连续两次失败 → lead 亲自实现或拆小任务，不空转重派。
 - **调度约束**：共享 target 目录或源码依赖的任务（如同一 workspace 的 backend/core）**串行**派发，避免门禁互相污染；写作用域互不重叠是并行的前提。
@@ -177,4 +177,5 @@ Rhytido = 用 Rust **净室重实现** Sollya 的数值引擎（任意精度求�
 - **测试分层细则与迁移台账**：`docs/plan/05-testing.md`。
 - **Subagent 评估台账与经验总结（滚动更新）**：`docs/review/subagent-retrospective.md`。
 - **研究/生态/许可证矩阵**：`docs/research/sollya-port-research.md`。
+- **M3 任务方案**：`docs/plan/M3-plan.md`；**Rust 数值优化技巧（派发参考，§7⑦）**：`docs/research/rust-numerical-optimization.md`。
 - **权威外部规范**：Rust API Guidelines、Rust Style Guide、Conventional Commits、rustfmt、Clippy、Rust Unsafe Code Guidelines（链接见文件头）。
