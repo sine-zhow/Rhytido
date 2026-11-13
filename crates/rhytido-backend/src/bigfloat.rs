@@ -1010,11 +1010,19 @@ impl FromStr for BigFloat {
             "-inf" | "-infty" | "-infinity" => return Ok(Self::neg_infinity()),
             _ => {}
         }
-        // Parse as decimal (base 10), then convert to binary at working precision.
+        // Parse as decimal (base 10), then convert to binary. Keep enough bits
+        // to round-trip the decimal's own significant digits: a D-digit decimal
+        // needs ceil(D * log2(10)) bits and log2(10) < 10/3. Never drop below the
+        // default working precision, so short literals behave exactly as before;
+        // long literals (a 300-bit value renders to ~92 digits) keep the bits they
+        // need instead of being truncated to the default. This is the parse half
+        // of the Display decimal round-trip.
         let dec = DBig::from_str(t).map_err(|e| Error::Parse(e.to_string()))?;
+        let needed = dec.precision() * 10 / 3 + 1;
+        let prec = DEFAULT_PRECISION.max(needed);
         let bin = dec
             .with_rounding::<mode::HalfEven>()
-            .with_base_and_precision::<2>(DEFAULT_PRECISION)
+            .with_base_and_precision::<2>(prec)
             .value();
         Ok(Self::num(bin))
     }
@@ -1031,9 +1039,34 @@ impl fmt::Display for BigFloat {
                     } else {
                         f.write_str("inf")
                     }
-                } else {
-                    // Internal representation is base-2; display in decimal.
+                } else if v.is_zero() {
+                    // Signed zero keeps its exact prior rendering: the decimal
+                    // conversion emits "0" for both signs (unchanged baseline).
                     fmt::Display::fmt(&v.to_decimal().value(), f)
+                } else {
+                    // Internal representation is base-2; display in decimal with
+                    // enough significant digits to round-trip.
+                    //
+                    // Digit-count derivation (IEEE-754 / C++ `max_digits10`): a
+                    // p-bit binary significand resolves relative gaps of 2^-p.
+                    // d decimal digits resolve 10^-d, and reading the decimal
+                    // back then re-rounding to p bits recovers the value once
+                    // 10^-d is finer than half a binary ulp, i.e. once
+                    // d >= ceil(p * log10(2)) + 1. The trailing +1 is the guard
+                    // digit that makes the round-trip exact for every p-bit
+                    // float (53 bits -> 17 digits, 165 bits -> 51 digits).
+                    //
+                    // dashu's `to_decimal` instead derives the decimal precision
+                    // from the binary one (~p/4 digits), which truncated 53-bit
+                    // values to ~15 digits ((2^53-1) printed as 9007199254740990).
+                    // Request the round-trip digit count explicitly; the
+                    // conversion stays exact for values that need fewer digits.
+                    let p = v.precision();
+                    // Unlimited precision (0) carries only its actual significand.
+                    let bits = if p == 0 { v.repr().digits() } else { p };
+                    let digits = (bits as f64 * core::f64::consts::LOG10_2).ceil() as usize + 1;
+                    let dec = v.clone().with_base_and_precision::<10>(digits).value();
+                    fmt::Display::fmt(&dec, f)
                 }
             }
         }

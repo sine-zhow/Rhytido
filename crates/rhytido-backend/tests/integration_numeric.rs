@@ -208,7 +208,10 @@ fn normal_rational_division_matches_bigfloat() {
 #[test]
 fn normal_double_format_matches_f64_for_small_integers() {
     // Integers up to 2^53 are exact in binary64: facade rounding must agree
-    // with the native f64 conversion.
+    // with the native f64 conversion. Since the Display round-trip fix the
+    // decimal cross-check spans the whole exact range as well: it was formerly
+    // limited to ≤15 significant digits because the 53-bit rendering truncated
+    // beyond that (05-testing.md §4b). Lifting that limit is a strengthening.
     for v in [
         0i64,
         1,
@@ -216,19 +219,16 @@ fn normal_double_format_matches_f64_for_small_integers() {
         42,
         -1000,
         1 << 20,
+        123456789012345,
         (1 << 53) - 1,
         -((1 << 53) - 1),
+        1 << 53,
     ] {
         let f = BigFloat::from_i64(v);
         let d = f.round_to_format(Format::Double, Rounding::Nearest);
         assert_eq!(d, BigFloat::from_f64(v as f64));
-    }
-    // The Display cross-check stays within 15 significant decimal digits:
-    // at 53-bit precision the decimal rendering rounds beyond that.
-    for v in [0i64, 1, -1, 42, -1000, 1 << 20, 123456789012345] {
+        // Full-precision Display cross-check against the exact integer.
         let i = Integer::from(v);
-        let f = BigFloat::from_i64(v);
-        let d = f.round_to_format(Format::Double, Rounding::Nearest);
         assert_eq!(d.to_string(), i.to_string());
     }
 }

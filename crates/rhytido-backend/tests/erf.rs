@@ -217,16 +217,27 @@ fn normal_checked_bound_is_below_one_ulp() {
 
 #[test]
 fn normal_checked_value_stable_across_working_precisions() {
-    // Two independently rounded results must agree to the coarser resolution
-    // (both are correctly rounded), which cross-checks the certificate without
-    // relying on an external table.
-    for x in [0.5f64, 1.0, 2.0, 3.0] {
+    // Two independently rounded results must agree at the FULL coarser
+    // resolution (both are correctly rounded), which cross-checks the
+    // certificate against a backend high-precision reference rather than an
+    // external table. After the Display round-trip fix this is no longer
+    // bounded by the 15-digit public constants: it verifies every working-
+    // precision bit across the whole public-constant value range (a
+    // strengthening of the former ≤15-digit cross-check, not a relaxation).
+    for x in [0.5f64, 1.0, 2.0, 3.0, 4.0, -1.0, -2.5] {
         let coarse = BigFloat::from_f64(x).with_precision(53).erf();
         let fine = BigFloat::from_f64(x).with_precision(300).erf();
         assert_eq!(
-            coarse.round_to(50, Rounding::Nearest),
-            fine.round_to(50, Rounding::Nearest),
+            coarse,
+            fine.round_to(53, Rounding::Nearest),
             "erf({x}) inconsistent between p=53 and p=300"
+        );
+        let ccoarse = BigFloat::from_f64(x).with_precision(53).erfc();
+        let cfine = BigFloat::from_f64(x).with_precision(300).erfc();
+        assert_eq!(
+            ccoarse,
+            cfine.round_to(53, Rounding::Nearest),
+            "erfc({x}) inconsistent between p=53 and p=300"
         );
     }
 }
