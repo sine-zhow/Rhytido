@@ -10,6 +10,7 @@
 //! AGENTS.md before it is used or merged.
 
 mod bigfloat;
+mod erf;
 mod error;
 mod format;
 mod integer;
