@@ -38,6 +38,7 @@
 - **backend（已核验，`cargo test -p rhytido-backend --offline` EXIT=0）**：单元 9（bigfloat 3：FBinExt 谓词，含「∞ 的 significand 为零但 is_zero 必须为 false」；interval 6：make_range 向外舍入契约/最大精度/等端点/unlimited 回退/lo>hi/NaN）+ 模块 95（integer 14 / bigfloat 37 / rational 14 / interval 13 / format 10 / error 7[新增]）+ 集成 8（integration_numeric.rs[新增]）+ doctest 5（不变）= **117 全绿**；clippy `-D warnings` EXIT=0。
 - **合计**：基线 165（backend 88 + core 77）**零丢失** + 新增 40（backend 24 + core 16）= 205 个三层测试 + 5 doctest = **210 全绿**。
 - **M2 阶段更新（2026-11-13，lead 复核）**：M2-A +61、M2-B +48（erf 单元 18 / erf 模块 27 / doctest +3）。现状 backend：单元 42 / 模块 141（integer 14、bigfloat 61、rational 14、interval 35、format 10、error 7、erf 27）/ 集成 8 / doctest 8 = **226**；core 93 不变；**workspace 319 全绿，基线零丢失**。
+- **M2-C 更新（2026-11-13，lead 独立验收）**：+140（backend +23：next_* 单元 6 / bigfloat 模块 +15 / doctest +2；core +117：单元 +41、faithful 27、interval_eval 24、integration_engine 15、eval +3、expr +2、print +2、doctest +3）。现状 backend：单元 48 / 模块 156 / 集成 8 / doctest 10 = **249**；core：单元 50 / 模块 133 / 集成 22 / doctest 3 = **210**；**workspace 459 全绿，基线零丢失**。lead 收尾修复：8 处 approx_constant 以值恒等 std 常量替换（断言不弱化）、fmt 一处、游离基线日志删除。
 
 ## 4. 验收证据（集中门禁，lead 实测）
 
