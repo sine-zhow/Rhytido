@@ -23,6 +23,8 @@
 
 | 11 | 56e7b9bd | M2-E2 BaseFn 收齐 | core/** | ✅ 成功 | 带根因修复+参考规格+Rust 优化条款一次成功；BaseFn 17→30 + is_smooth 穷尽分类 + 非光滑 Taylor 回退（contains_non_smooth 记忆化，clone/求导前判定）；+40 测试（非光滑回退专门包含性 9 函数×跨断点×33 点×prec×k、30 变体导数恒等式+中心差分）；workspace 515→555 零丢失、backend 无扰；**诚实标记两处格式语义缺口**（backend round_to_format 无溢出/次正规；format_interval 定向端点致值未必最近——后者源于 lead 的 Down/Up 指示），留 M2-E2b 补全。评级：优秀 |
 
+| 12 | 32ac1684 | M2-E2b 格式语义补全 | backend+core | ✅ 成功 | 带根因修复条款一次成功；round_to_format 完整 IEEE（canonical_parts 精确整数量化、舍入后溢出判定覆盖 emax 进位、6 模式溢出/下溢规则、次正规网格）+ Format::exponent_range；format_interval 最近端点修复值未必最近（点折叠→Exact/CorrectlyRounded）；+13 溢出/次正规测试+单调性/幂等/包围属性；修正原 Down/Up 弱证书断言为加强（非弱化）；workspace 555→569 零丢失；证据式报告与 lead 复核逐项吻合。评级：优秀 |
+
 ## 2. 经验（经证实有效的做法，保持）
 
 - **详尽契约**：API 签名、算法参数（P=p+3ceil(x²)+guard）、测试清单（含具体常数值与"禁改常数迁就输出"条款）、门禁命令、报告格式全部写入提示词 → 3/3 成功任务一次通过 lead 复核。

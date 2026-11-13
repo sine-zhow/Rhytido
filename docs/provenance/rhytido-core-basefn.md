@@ -35,7 +35,7 @@
 
 - **backend round_to_format**：仅尾数精度舍入，无溢出→inf/次正规/指数钳制（M0 自述留待 M2 细化）；halfprecision(65520)→65536 而非 +inf。
 - **format_interval 定向端点（Down/Up）**：有效包围但点输入下括住相邻两格式浮点，faithful Test2 返回下邻**未必最近**，与 Sollya 最近舍入语义不符。**源于 lead 的 Down/Up 指示**；修复=最近端点（round-to-nearest 单调，[rn(lo),rn(hi)] 更紧且点输入折叠为点）。
-- 两者列 M2-E2b 专项补全；E2 核心分派/非光滑回退合格，先行验收锁定。
+- 两者已由 **M2-E2b 补全收口**（2026-11-13，lead 独立验收，workspace 569 全绿，见 rhytido-format-ieee.md）：round_to_format 完整 IEEE（exponent_range/次正规网格/舍入后溢出判定/6 模式溢出规则，精确整数算术）；format_interval 改最近端点（点折叠→Exact/CorrectlyRounded，原 Down/Up 弱证书断言修正为加强）。E2 核心分派/非光滑回退合格。
 
 ## 6. 复核
 
