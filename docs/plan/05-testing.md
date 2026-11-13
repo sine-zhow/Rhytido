@@ -43,6 +43,7 @@
 - **M2-E1 更新（2026-11-13，lead 独立验收）**：+6（backend bigfloat 模块 76→82 往返属性；core 260 无扰）。现状 backend **255**（单元 48 / 模块 189 / 集成 8 / doctest 10）；**workspace 515 全绿，基线零丢失**。Display 往返修复（§4b 怪癖收口）+ 解除 ≤15 位限制恢复全精度交叉核对（加强非弱化）。
 - **M2-E2 更新（2026-11-13，lead 独立验收）**：+40（core：diff +4、eval +7、expr +4、faithful +6、integration_engine +3、interval_eval +7、print +3、taylor +6；backend 255 不变）。现状 core：单元 57 / 模块 213 / 集成 25 / doctest 5 = **300**；**workspace 555 全绿，基线零丢失**。BaseFn 17→30 + is_smooth（21 光滑/9 非光滑）+ 非光滑 Taylor 回退。**遗留格式语义缺口（M2-E2b 补全）**：backend round_to_format 无溢出/次正规/指数钳制；format_interval 定向端点致格式转换值未必最近。
 - **M2-E2b 更新（2026-11-13，lead 独立验收）**：+14（backend format 模块 10→23 + doctest +1；core 300 不变，仅修正断言）。现状 backend **269**；**workspace 569 全绿，基线零丢失**。补全两处格式缺口：round_to_format 完整 IEEE（exponent_range/次正规网格/舍入后溢出判定/6 模式溢出规则，精确整数算术）；format_interval 最近端点（点折叠→Exact/CorrectlyRounded，原 Down/Up 弱证书断言修正为加强）。
+- **M2 收口（2026-11-13，lead 验收）**：M2 全里程碑通过（M2-acceptance.md）——三判据（8 态证书/函数族差分/cutoff）全满足，**workspace 569 全绿**（backend 269 / core 300），三门禁 EXIT=0，基线全程零丢失。DD/TD 延后 M6；evaluate_faithful 微基准延后性能阶段（先正确后快）。
 
 ## 4. 验收证据（集中门禁，lead 实测）
 

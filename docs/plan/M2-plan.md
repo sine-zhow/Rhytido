@@ -13,7 +13,7 @@
 | M2-E1 Display 往返 | ✅ 完成 | workspace **515 全绿**（509 零丢失 +6 往返属性）；Display ceil(p·log10(2))+1 位、FromStr 配套 max(165,D·10/3+1) 向后兼容；解除 ≤15 位限制恢复全精度交叉核对；lead 抽查位数推导/FromStr 合格 |
 | M2-E2 BaseFn 收齐 | ✅ 完成 | workspace **555 全绿**（515 零丢失 +40）；BaseFn 17→30 + is_smooth + 非光滑 Taylor 回退；lead 抽查 is_smooth/回退/format_interval 合格 |
 | M2-E2b 格式语义补全 | ✅ 完成 | workspace **569 全绿**（555 零丢失 +14）；round_to_format 完整 IEEE（次正规/舍入后溢出/6 模式）+ exponent_range；format_interval 最近端点→Exact/CorrectlyRounded；lead 抽查量化/溢出/单调性合格 |
-| M2-E3 验收 | ⏳ 待派发 | 依赖 E2b；契约 docs/plan/M2-E-dispatch.md |
+| M2-E3 验收 | ✅ 完成 | lead 撰写 M2-acceptance.md：三判据全满足、569 全绿、三门禁 EXIT=0、基线零丢失，**M2 验收通过** |
 | M2-E Display 往返 + 验收 | ⏳ 待启动 | |
 
 ## 1. 现状盘点（工具取证）
