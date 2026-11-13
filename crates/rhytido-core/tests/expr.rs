@@ -154,6 +154,72 @@ fn robustness_empty_interner() {
 }
 
 #[test]
+fn normal_erf_erfc_variants_intern_distinctly() {
+    // M2-C added Erf/Erfc to BaseFn: the two variants must intern as distinct
+    // nodes, dedup with themselves, and never merge with an existing variant.
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let erf = it.intern(Expr::Apply(BaseFn::Erf, x));
+    let erf_again = it.intern(Expr::Apply(BaseFn::Erf, x));
+    let erfc = it.intern(Expr::Apply(BaseFn::Erfc, x));
+    let exp = it.intern(Expr::Apply(BaseFn::Exp, x));
+    assert_eq!(erf, erf_again, "identical applications must share a node");
+    assert_ne!(erf, erfc, "erf and erfc are different functions");
+    assert_ne!(erfc, exp);
+    assert_eq!(it.len(), 4, "variable + three distinct applications");
+    match it.get(erf) {
+        Expr::Apply(f, a) => {
+            assert_eq!(*f, BaseFn::Erf);
+            assert_eq!(*a, x);
+        }
+        other => panic!("expected an application node, got {other:?}"),
+    }
+    // A different argument gives a different node even for the same function.
+    let one = it.intern(Expr::Constant(BigFloat::from_i64(1)));
+    let erf_one = it.intern(Expr::Apply(BaseFn::Erf, one));
+    assert_ne!(erf_one, erf);
+}
+
+#[test]
+fn robustness_every_base_fn_variant_interns() {
+    // Exhaustive interning check over all seventeen variants, so a future
+    // variant cannot silently collide with an existing one.
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let fns = [
+        BaseFn::Sqrt,
+        BaseFn::Exp,
+        BaseFn::Ln,
+        BaseFn::Sin,
+        BaseFn::Cos,
+        BaseFn::Tan,
+        BaseFn::Asin,
+        BaseFn::Acos,
+        BaseFn::Atan,
+        BaseFn::Sinh,
+        BaseFn::Cosh,
+        BaseFn::Tanh,
+        BaseFn::Asinh,
+        BaseFn::Acosh,
+        BaseFn::Atanh,
+        BaseFn::Erf,
+        BaseFn::Erfc,
+    ];
+    assert_eq!(fns.len(), 17);
+    let nodes: Vec<NodeId> = fns.iter().map(|f| it.intern(Expr::Apply(*f, x))).collect();
+    for (i, a) in nodes.iter().enumerate() {
+        for b in nodes.iter().skip(i + 1) {
+            assert_ne!(a, b, "two BaseFn variants share an interned node");
+        }
+    }
+    // Re-interning everything is idempotent.
+    for (f, &id) in fns.iter().zip(&nodes) {
+        assert_eq!(it.intern(Expr::Apply(*f, x)), id);
+    }
+    assert_eq!(it.len(), 1 + fns.len());
+}
+
+#[test]
 fn robustness_all_node_kinds_intern() {
     let mut it = Interner::new();
     let x = it.intern(Expr::Variable);

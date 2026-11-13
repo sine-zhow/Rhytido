@@ -89,5 +89,7 @@ fn apply_fn(f: BaseFn, v: &BigFloat) -> BigFloat {
         BaseFn::Asinh => v.asinh(),
         BaseFn::Acosh => v.acosh(),
         BaseFn::Atanh => v.atanh(),
+        BaseFn::Erf => v.erf(),
+        BaseFn::Erfc => v.erfc(),
     }
 }

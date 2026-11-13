@@ -38,6 +38,8 @@ fn base_fn_name(f: BaseFn) -> &'static str {
         BaseFn::Asinh => "asinh",
         BaseFn::Acosh => "acosh",
         BaseFn::Atanh => "atanh",
+        BaseFn::Erf => "erf",
+        BaseFn::Erfc => "erfc",
     }
 }
 

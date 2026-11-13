@@ -236,3 +236,109 @@ fn robustness_all_functions_evaluable() {
         }
     }
 }
+
+// ---- M2-C additions: erf/erfc dispatch (appended, existing cases intact) --
+
+#[test]
+fn normal_erf_erfc_dispatch_matches_the_backend_facade() {
+    // The two new BaseFn variants must route to BigFloat::erf / ::erfc, not to
+    // any other kernel: the point evaluator's answer is compared with the
+    // facade call on the same operand, and with the public constants at 15
+    // significant digits (the same cross-check budget as the backend's
+    // tests/erf.rs, which owns the numerical proof).
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let erf_x = it.intern(Expr::Apply(BaseFn::Erf, x));
+    let erfc_x = it.intern(Expr::Apply(BaseFn::Erfc, x));
+    let tol = BigFloat::from_f64(1e-15);
+    for arg in [
+        BigFloat::from_f64(0.5),
+        BigFloat::one(),
+        BigFloat::from_f64(2.0),
+        BigFloat::from_f64(-1.0),
+    ] {
+        let direct_erf = arg.erf();
+        let direct_erfc = arg.erfc();
+        assert_eq!(
+            eval_point(&it, erf_x, &arg, PREC),
+            direct_erf,
+            "erf dispatch differs from the facade for {arg}"
+        );
+        assert_eq!(
+            eval_point(&it, erfc_x, &arg, PREC),
+            direct_erfc,
+            "erfc dispatch differs from the facade for {arg}"
+        );
+        // The two kernels must not collapse onto each other (both differ from
+        // each other for every argument sampled here).
+        assert!((direct_erf.clone() - direct_erfc.clone()).abs() > tol.clone());
+    }
+    let one = BigFloat::one();
+    let erf1 = eval_point(&it, erf_x, &one, PREC);
+    let erfc1 = eval_point(&it, erfc_x, &one, PREC);
+    assert!((erf1.clone() - BigFloat::from_f64(0.842700792949715)).abs() < tol.clone());
+    assert!((erfc1.clone() - BigFloat::from_f64(0.157299207050285)).abs() < tol.clone());
+    // Complements within the tested precision.
+    assert!((erf1 + erfc1 - BigFloat::one()).abs() < tol);
+}
+
+#[test]
+fn robustness_all_seventeen_functions_evaluable() {
+    // The 15-function roster above predates erf/erfc; this one covers all
+    // seventeen variants so no dispatch arm can be dropped silently.
+    let mut it = Interner::new();
+    let half = it.intern(Expr::Constant(BigFloat::from_f64(0.5)));
+    let fns = [
+        BaseFn::Sqrt,
+        BaseFn::Exp,
+        BaseFn::Ln,
+        BaseFn::Sin,
+        BaseFn::Cos,
+        BaseFn::Tan,
+        BaseFn::Asin,
+        BaseFn::Acos,
+        BaseFn::Atan,
+        BaseFn::Sinh,
+        BaseFn::Cosh,
+        BaseFn::Tanh,
+        BaseFn::Asinh,
+        BaseFn::Acosh,
+        BaseFn::Atanh,
+        BaseFn::Erf,
+        BaseFn::Erfc,
+    ];
+    assert_eq!(fns.len(), 17);
+    for f in fns {
+        let node = it.intern(Expr::Apply(f, half));
+        let v = eval_point(&it, node, &BigFloat::zero(), PREC);
+        match f {
+            // 0.5 is outside acosh's domain; every other function is defined.
+            BaseFn::Acosh => assert!(v.is_nan(), "{f:?} should be out of domain"),
+            _ => assert!(v.is_finite(), "{f:?} did not yield a finite value"),
+        }
+    }
+}
+
+#[test]
+fn extreme_erf_erfc_special_values_route_to_their_limits() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let erf_x = it.intern(Expr::Apply(BaseFn::Erf, x));
+    let erfc_x = it.intern(Expr::Apply(BaseFn::Erfc, x));
+    for (expr, arg, want) in [
+        (erf_x, BigFloat::infinity(), BigFloat::one()),
+        (erf_x, BigFloat::neg_infinity(), -BigFloat::one()),
+        (erfc_x, BigFloat::infinity(), BigFloat::zero()),
+        (erfc_x, BigFloat::neg_infinity(), BigFloat::from_i64(2)),
+    ] {
+        let v = eval_point(&it, expr, &arg, PREC);
+        assert_eq!(v, want, "{:?} at {arg}", it.get(expr));
+    }
+    for &expr in &[erf_x, erfc_x] {
+        assert!(eval_point(&it, expr, &BigFloat::NAN, PREC).is_nan());
+        assert!(eval_point(&it, expr, &BigFloat::zero(), PREC).is_finite());
+    }
+    // erf is odd: erf(-0) keeps the sign through the evaluator.
+    let neg_zero = eval_point(&it, erf_x, &-BigFloat::zero(), PREC);
+    assert!(neg_zero.is_zero() && neg_zero.is_sign_negative());
+}

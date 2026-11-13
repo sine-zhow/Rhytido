@@ -6,7 +6,7 @@
 //! extreme / error / robustness. Test helpers are free functions: integration
 //! tests are separate crates and cannot add inherent impls to `BigFloat`.
 
-use rhytido_backend::{BigFloat, DEFAULT_PRECISION, Rounding};
+use rhytido_backend::{BigFloat, DEFAULT_PRECISION, Integer, Rounding};
 
 fn close(a: &BigFloat, b: &BigFloat, bits: usize) -> bool {
     // Compare at a reduced precision to tolerate last-bit rounding.
@@ -861,4 +861,325 @@ fn robustness_rounding_high_precision() {
     assert_eq!(neg.ceil(), BigFloat::zero());
     assert_eq!(neg.floor(), -BigFloat::one());
     assert_eq!(neg.nearestint(), BigFloat::zero());
+}
+
+// ---- M2-C next_above / next_below: normal cases -------------------------
+
+/// Exact `(significand, exponent)` parts of a finite value, so assertions are
+/// about the represented number rather than about decimal display.
+fn parts(v: &BigFloat) -> (Integer, isize) {
+    v.canonical_parts().expect("finite neighbor")
+}
+
+/// `2^k` as a BigFloat for any integer `k`, exact. Binary exponentiation keeps
+/// every intermediate a one-bit significand, so no rounding can occur; the
+/// negative case divides the exact power and is likewise exact.
+fn pow2_of(k: isize) -> BigFloat {
+    let mut acc = BigFloat::one();
+    let mut base = BigFloat::from_i64(2);
+    let mut n = k.unsigned_abs();
+    while n > 0 {
+        if n & 1 == 1 {
+            acc = acc * base.clone();
+        }
+        base = base.clone() * base;
+        n >>= 1;
+    }
+    if k >= 0 { acc } else { BigFloat::one() / acc }
+}
+
+#[test]
+fn normal_next_neighbors_on_the_binary64_grid() {
+    let one = BigFloat::one();
+    // Above 1 the ulp is 2^-52; the binade below 1 is twice as fine.
+    assert_eq!(one.next_above(53), BigFloat::from_f64(1.0000000000000002));
+    assert_eq!(one.next_below(53), BigFloat::from_f64(0.9999999999999999));
+    // At the default working precision the double 0.1 is an exact dyadic.
+    let tenth = BigFloat::from_f64(0.1);
+    assert!(tenth.next_below(53) < tenth);
+    assert!(tenth < tenth.next_above(53));
+    assert_eq!(tenth.next_above(53).next_below(53), tenth);
+}
+
+#[test]
+fn normal_next_companion_identity_for_representable_values() {
+    // A value is representable at p bits exactly when both directed roundings
+    // fix it; for those values the two neighbor steps must invert each other.
+    let vals = [
+        BigFloat::from_f64(0.1),
+        BigFloat::from_i64(3) / BigFloat::from_i64(8),
+        -BigFloat::from_i64(21) / BigFloat::from_i64(4),
+        BigFloat::from_f64(1.0000000000000002),
+        BigFloat::one() / pow2_of(60),
+    ];
+    for p in [4usize, 11, 24, 53, 64, 113, DEFAULT_PRECISION] {
+        for v in &vals {
+            let up_fixed = v.round_to(p, Rounding::Up) == *v;
+            let down_fixed = v.round_to(p, Rounding::Down) == *v;
+            assert_eq!(up_fixed, down_fixed, "representability p={p}");
+            if up_fixed {
+                assert_eq!(v.next_above(p).next_below(p), *v, "up-then-down p={p}");
+                assert_eq!(v.next_below(p).next_above(p), *v, "down-then-up p={p}");
+            }
+        }
+    }
+}
+
+#[test]
+fn normal_next_neighbors_are_adjacent_and_ordered() {
+    // No p-bit float may sit strictly between a value and its neighbor: the
+    // exact midpoint must round back onto the lower side.
+    let vals = [
+        BigFloat::from_f64(1.5),
+        BigFloat::from_i64(-7) / BigFloat::from_i64(5),
+        BigFloat::from_f64(12345.6789),
+    ];
+    for p in [4usize, 24, 53] {
+        for v in &vals {
+            let r = v.round_to(p, Rounding::Nearest);
+            let up = r.next_above(p);
+            let down = r.next_below(p);
+            assert!(down < r && r < up);
+            let wide = (r.clone().with_precision(p + 4) + up.clone().with_precision(p + 4))
+                / BigFloat::from_i64(2);
+            assert_eq!(wide.round_to(p, Rounding::Down), r);
+            let wide2 = (down.clone().with_precision(p + 4) + r.clone().with_precision(p + 4))
+                / BigFloat::from_i64(2);
+            assert_eq!(wide2.round_to(p, Rounding::Up), r);
+        }
+    }
+}
+
+#[test]
+fn normal_next_above_below_cross_sign_symmetry() {
+    // The grid is symmetric about zero: next_above(-x) = -next_below(x).
+    let vals = [
+        BigFloat::one(),
+        BigFloat::from_i64(8),
+        BigFloat::from_f64(0.1),
+        BigFloat::from_i64(2).sqrt(),
+    ];
+    for p in [4usize, 24, 53, 165] {
+        for v in &vals {
+            let neg = -v.clone();
+            assert_eq!(neg.next_above(p), -v.next_below(p));
+            assert_eq!(neg.next_below(p), -v.next_above(p));
+        }
+    }
+}
+
+#[test]
+fn normal_next_non_representable_matches_directed_rounding() {
+    // When the value does not fit in p bits, the neighbor toward +infinity is
+    // exactly the round-up image and the neighbor toward -infinity the
+    // round-down image (the minimal p-float >= / <= decision).
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    let pi = BigFloat::pi_with_precision(120);
+    for v in [third.clone(), -third.clone(), pi.clone(), -pi.clone()] {
+        for p in [4usize, 10, 53] {
+            assert_eq!(v.next_above(p), v.round_to(p, Rounding::Up));
+            assert_eq!(v.next_below(p), v.round_to(p, Rounding::Down));
+            // Strictly past the operand in both directions.
+            assert!(v.next_below(p) < v && v < v.next_above(p));
+        }
+    }
+}
+
+// ---- M2-C next_above / next_below: extreme cases ------------------------
+
+#[test]
+fn extreme_next_power_of_two_boundaries() {
+    // At 2^k the grid above is coarser than the grid below by a factor of two:
+    // next_above = 2^k + 2^(k+1-p), next_below = 2^k - 2^(k-p). Asserted on the
+    // exact canonical parts, including binade crossings.
+    for p in [4usize, 24, 53] {
+        for k in [-40isize, -1, 0, 1, 7, 60] {
+            let x = pow2_of(k);
+            // The successors are (2^(p-1) + 1) * 2^(k+1-p) upward and
+            // (2^p - 1) * 2^(k-p) downward: the coarse and fine grid sides.
+            let up_sig = Integer::from(2).pow(p - 1) + Integer::from(1);
+            let down_sig = Integer::from(2).pow(p) - Integer::from(1);
+            assert_eq!(
+                parts(&x.next_above(p)),
+                (up_sig, k + 1 - p as isize),
+                "next_above(2^{k}, {p})"
+            );
+            assert_eq!(
+                parts(&x.next_below(p)),
+                (down_sig.clone(), k - p as isize),
+                "next_below(2^{k}, {p})"
+            );
+            assert_eq!(
+                parts(&(-x.clone()).next_above(p)),
+                (-down_sig, k - p as isize),
+                "next_above(-(2^{k}), {p})"
+            );
+            // The steps invert each other across the boundary.
+            assert_eq!(x.next_above(p).next_below(p), x);
+            assert_eq!(x.next_below(p).next_above(p), x);
+        }
+    }
+}
+
+#[test]
+fn extreme_next_zero_convention() {
+    // Documented convention: zero steps to +-(2^(1-p)) (there is no smallest
+    // positive float with an unbounded exponent range).
+    for p in [4usize, 24, 53, 113] {
+        let zero = BigFloat::zero();
+        // 2^(1-p) is the one-bit significand 1 at exponent 1-p.
+        assert_eq!(
+            parts(&zero.next_above(p)),
+            (Integer::from(1), 1 - p as isize)
+        );
+        assert_eq!(
+            parts(&zero.next_below(p)),
+            (-Integer::from(1), 1 - p as isize)
+        );
+        // Signed zero follows the same convention (the value is zero).
+        assert_eq!(zero.next_above(p), (-zero.clone()).next_above(p));
+        assert_eq!(zero.next_below(p), (-zero).next_below(p));
+    }
+}
+
+#[test]
+fn extreme_next_infinities_and_nan() {
+    for p in [4usize, 53, DEFAULT_PRECISION] {
+        assert!(BigFloat::NAN.next_above(p).is_nan());
+        assert!(BigFloat::NAN.next_below(p).is_nan());
+        let inf = BigFloat::infinity();
+        assert!(inf.next_above(p).is_infinite() && inf.next_above(p).is_sign_positive());
+        assert!(inf.next_below(p).is_infinite() && inf.next_below(p).is_sign_positive());
+        let ninf = BigFloat::neg_infinity();
+        assert!(ninf.next_above(p).is_infinite() && ninf.next_above(p).is_sign_negative());
+        assert!(ninf.next_below(p).is_infinite() && ninf.next_below(p).is_sign_negative());
+    }
+}
+
+#[test]
+fn extreme_next_wide_and_narrow_precisions() {
+    // Very wide queries stay exact and round-trip; the two-bit grid is the
+    // narrowest accepted format.
+    let one = BigFloat::one();
+    for p in [2usize, 3, 1000, 4096] {
+        let up = one.next_above(p);
+        let down = one.next_below(p);
+        assert!(down < one && one < up, "ordering at p={p}");
+        assert_eq!(up.next_below(p), one, "round trip up at p={p}");
+        assert_eq!(down.next_above(p), one, "round trip down at p={p}");
+    }
+    // precisions below two bits are clamped to the two-bit grid.
+    assert_eq!(one.next_above(0), one.next_above(2));
+    assert_eq!(one.next_above(1), one.next_above(2));
+    assert_eq!(one.next_below(0), one.next_below(2));
+    assert_eq!(one.next_below(1), one.next_below(2));
+}
+
+#[test]
+fn extreme_next_all_ones_significand_carries() {
+    // (2^p - 1) * 2^0 is the largest p-float below 2^p; its successor is the
+    // power of two itself (a carry that normalization must fold).
+    for p in [4usize, 24, 53] {
+        let top = pow2_of(p as isize) - BigFloat::one();
+        let up = top.next_above(p);
+        assert!(up.is_integer(), "carry stays integral");
+        assert_eq!(parts(&up), (Integer::from(1), p as isize), "carry p={p}");
+        assert_eq!(up.next_below(p), top);
+        let neg = -top;
+        assert_eq!(
+            parts(&neg.next_below(p)),
+            (-Integer::from(1), p as isize),
+            "negative carry p={p}"
+        );
+    }
+}
+
+#[test]
+fn extreme_next_tiny_and_huge_exponents() {
+    // Exponent extremes must not materialize an absurdly wide significand.
+    for k in [-100_000isize, -1000, 1000, 100_000] {
+        let x = pow2_of(k);
+        let up = x.next_above(53);
+        let down = x.next_below(53);
+        assert!(down < x && x < up, "ordering 2^{k}");
+        assert_eq!(up.next_below(53), x);
+        assert_eq!(down.next_above(53), x);
+        assert_eq!(parts(&up).1, k + 1 - 53, "up exponent 2^{k}");
+        assert_eq!(parts(&down).1, k - 53, "down exponent 2^{k}");
+    }
+}
+
+// ---- M2-C next_above / next_below: error cases (异常报错) ---------------
+
+#[test]
+fn error_next_special_operands_report_by_value() {
+    // This API is infallible: out-of-contract operands (NaN, infinities) are
+    // reported by value per the documented mapping instead of an error.
+    let cases = [
+        BigFloat::NAN,
+        BigFloat::infinity(),
+        BigFloat::neg_infinity(),
+    ];
+    for v in &cases {
+        for p in [0usize, 2, 53, 1000] {
+            let up = v.next_above(p);
+            let down = v.next_below(p);
+            assert_eq!(up.is_nan(), v.is_nan());
+            assert_eq!(down.is_nan(), v.is_nan());
+            if v.is_nan() {
+                assert!(up.is_nan() && down.is_nan());
+            } else {
+                // Infinities have no finite successor: they are unchanged.
+                assert_eq!(up, *v);
+                assert_eq!(down, *v);
+            }
+        }
+    }
+}
+
+#[test]
+fn error_next_of_nan_propagates_through_comparisons() {
+    // Neighbors of NaN stay NaN and comparisons stay undefined (None).
+    let nan = BigFloat::NAN.next_above(53);
+    assert!(nan.is_nan());
+    assert!(nan.partial_cmp(&BigFloat::one()).is_none());
+    assert!(nan != BigFloat::NAN);
+}
+
+// ---- M2-C next_above / next_below: robustness (异常中断) ----------------
+
+#[test]
+fn robustness_next_is_deterministic_and_labelled() {
+    // Two calls on the same operand must agree bit-for-bit, and the result must
+    // carry the requested working precision (the interval layer rounds outward
+    // at the widest endpoint precision).
+    let vals = [
+        BigFloat::from_f64(0.1),
+        BigFloat::one() / BigFloat::from_i64(3),
+        BigFloat::from_i64(-5) / BigFloat::from_i64(7),
+    ];
+    for p in [24usize, 53, DEFAULT_PRECISION] {
+        for v in &vals {
+            let a = v.next_above(p);
+            let b = v.next_above(p);
+            assert_eq!(a, b);
+            assert_eq!(a.precision(), p);
+            assert_eq!(v.next_below(p).precision(), p);
+        }
+    }
+}
+
+#[test]
+fn robustness_next_never_panics_over_a_sweep() {
+    // A sweep over values, precisions and both directions must stay panic-free,
+    // including operands wider than the requested precision.
+    let mut v = BigFloat::from_f64(1.0 / 3.0);
+    for i in 0..200 {
+        let p = 2 + (i % 97);
+        let _ = v.next_above(p);
+        let _ = v.next_below(p);
+        v = v * BigFloat::from_f64(1.0009765625);
+    }
+    let _ = BigFloat::zero().next_above(2);
+    let _ = (-BigFloat::zero()).next_below(3);
 }

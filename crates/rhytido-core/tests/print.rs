@@ -154,3 +154,66 @@ fn robustness_shared_subtree_prints_consistently() {
     assert_eq!(print_expr(&it, e1), print_expr(&it, e2));
     assert_eq!(print_expr(&it, e1), "sqrt(_x_) + sqrt(_x_)");
 }
+
+// ---- M2-C additions: erf/erfc names (appended, existing cases intact) ----
+
+#[test]
+fn normal_erf_erfc_names() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let erf = it.intern(Expr::Apply(BaseFn::Erf, x));
+    let erfc = it.intern(Expr::Apply(BaseFn::Erfc, x));
+    assert_eq!(print_expr(&it, erf), "erf(_x_)");
+    assert_eq!(print_expr(&it, erfc), "erfc(_x_)");
+    // Nested and combined with operators: application binds as an atom.
+    let inner = it.intern(Expr::Apply(BaseFn::Erfc, erf));
+    assert_eq!(print_expr(&it, inner), "erfc(erf(_x_))");
+    let two = it.intern(Expr::Constant(BigFloat::from_i64(2)));
+    let scaled = it.intern(Expr::Mul(two, erf));
+    assert_eq!(print_expr(&it, scaled), "2*erf(_x_)");
+    let summed = it.intern(Expr::Add(erf, erfc));
+    assert_eq!(print_expr(&it, summed), "erf(_x_) + erfc(_x_)");
+    let negated = it.intern(Expr::Neg(erf));
+    assert_eq!(print_expr(&it, negated), "-erf(_x_)");
+    let powered = it.intern(Expr::Pow(erf, two));
+    assert_eq!(print_expr(&it, powered), "erf(_x_)^2");
+}
+
+#[test]
+fn extreme_all_function_names_are_distinct() {
+    // A name collision (e.g. erfc printed as "erf" + junk) would break the
+    // byte-level round trip that M2-E will gate on.
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let fns = [
+        (BaseFn::Sqrt, "sqrt"),
+        (BaseFn::Exp, "exp"),
+        (BaseFn::Ln, "ln"),
+        (BaseFn::Sin, "sin"),
+        (BaseFn::Cos, "cos"),
+        (BaseFn::Tan, "tan"),
+        (BaseFn::Asin, "asin"),
+        (BaseFn::Acos, "acos"),
+        (BaseFn::Atan, "atan"),
+        (BaseFn::Sinh, "sinh"),
+        (BaseFn::Cosh, "cosh"),
+        (BaseFn::Tanh, "tanh"),
+        (BaseFn::Asinh, "asinh"),
+        (BaseFn::Acosh, "acosh"),
+        (BaseFn::Atanh, "atanh"),
+        (BaseFn::Erf, "erf"),
+        (BaseFn::Erfc, "erfc"),
+    ];
+    let mut printed = Vec::new();
+    for (f, name) in fns {
+        let node = it.intern(Expr::Apply(f, x));
+        let text = print_expr(&it, node);
+        assert_eq!(text, format!("{name}(_x_)"));
+        printed.push(text);
+    }
+    for (i, a) in printed.iter().enumerate() {
+        for b in printed.iter().skip(i + 1) {
+            assert_ne!(a, b, "two functions share a rendering");
+        }
+    }
+}

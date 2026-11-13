@@ -52,6 +52,10 @@ pub enum BaseFn {
     Acosh,
     /// Inverse hyperbolic tangent.
     Atanh,
+    /// Error function.
+    Erf,
+    /// Complementary error function.
+    Erfc,
 }
 
 /// An expression node. Children are interned [`NodeId`]s.

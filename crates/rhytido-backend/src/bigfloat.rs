@@ -23,6 +23,11 @@ use crate::{Error, Integer};
 /// Default working precision in bits (Sollya's default is 165).
 pub const DEFAULT_PRECISION: usize = 165;
 
+/// Minimum significand width accepted by the neighbor kernel. A binary format
+/// with one significand bit cannot name a distinct neighbor, so successor
+/// queries below this width are clamped up to it (documented, panic-free).
+const MIN_STEP_PRECISION: usize = 2;
+
 /// Binary float with round-to-nearest-even, precision in bits.
 type FBin = FBig<mode::HalfEven, 2>;
 
@@ -204,6 +209,126 @@ impl BigFloat {
             Rounding::HalfAway => round_mode!(f, prec, mode::HalfAway),
         };
         Self::num(rounded)
+    }
+
+    /// Returns the smallest number representable with a `prec`-bit significand
+    /// that is strictly greater than `self`.
+    ///
+    /// The exponent range is unbounded (there is no overflow, underflow or
+    /// subnormal model), so the successor always exists. `NaN` maps to `NaN` and
+    /// both infinities map to themselves, since neither has a finite successor.
+    ///
+    /// Zero convention: `next_above(0, prec)` is `2^(1-prec)` (and symmetrically
+    /// `next_below(0, prec)` is `-(2^(1-prec))`). With an unbounded exponent
+    /// there is no smallest positive floating-point number, so this magnitude —
+    /// the spacing of the numbers just below `1` — is a documented convention,
+    /// not a true successor. Callers that need rigor must not step across zero;
+    /// the faithful engine disables its adjacent-float test whenever an
+    /// endpoint rounds to zero (see `rhytido_core::faithful`).
+    ///
+    /// Precisions below two bits are clamped up, because a binary format needs
+    /// at least two significand bits to have a distinct neighbor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rhytido_backend::{BigFloat, Rounding};
+    ///
+    /// let third = BigFloat::one() / BigFloat::from_i64(3);
+    /// // Not representable at ten bits: the successor is the round-up image.
+    /// assert_eq!(third.next_above(10), third.round_to(10, Rounding::Up));
+    /// assert!(third.next_below(10) < third && third < third.next_above(10));
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Never.
+    pub fn next_above(&self, prec: usize) -> Self {
+        self.next_at(prec, true)
+    }
+
+    /// Returns the largest number representable with a `prec`-bit significand
+    /// that is strictly less than `self`.
+    ///
+    /// The mirror image of [`BigFloat::next_above`]: `NaN` maps to `NaN`, both
+    /// infinities map to themselves, `next_below(0, prec)` is `-(2^(1-prec))`
+    /// under the same documented convention, and precisions below two bits are
+    /// clamped up. The two are exact inverses of each other on the representable
+    /// values, so `next_above(next_below(x, p), p) == x` whenever `x` is a
+    /// `p`-bit number.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rhytido_backend::BigFloat;
+    ///
+    /// let one = BigFloat::one();
+    /// // The predecessor of 1 at 53 bits is 1 - 2^-53: the binade below 1 is
+    /// // twice as fine as the binade above it.
+    /// let below = one.next_below(53);
+    /// assert!(below < one);
+    /// assert_eq!(below.next_above(53), one);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Never.
+    pub fn next_below(&self, prec: usize) -> Self {
+        self.next_at(prec, false)
+    }
+
+    /// Shared successor/predecessor kernel on the canonical `(significand,
+    /// exponent)` parts, so the arithmetic is exact integer arithmetic and no
+    /// backend rounding is involved on the representable branch.
+    ///
+    /// Derivation of the step. The value is `sig * 2^exp` with `sig` odd (the
+    /// backend normalizes trailing significand digits into the exponent) and
+    /// `d = digits(|sig|)` significant bits, so its magnitude lies in the binade
+    /// `[2^(exp+d-1), 2^(exp+d))`, whose `p`-bit spacing is
+    /// `2^(exp+d-p)`. Scaling `sig` by `2^(p-d)` puts the value on a unit grid,
+    /// and `+1`/`-1` on that grid is the neighbor toward `+infinity`/`-infinity`
+    /// — with one exception: when `d == 1` the value is exactly a power of two,
+    /// and the grid *below* it is twice as fine (binades get coarser upward), so
+    /// the step toward zero scales by `2^p` instead and uses half the distance.
+    /// Values with `d > p` are not representable at all; there the directed
+    /// rounding toward the requested side *is* the nearest representable value
+    /// on that side (strictly past `self` because `self` is not representable).
+    fn next_at(&self, prec: usize, above: bool) -> Self {
+        let f = match &self.value {
+            Value::Nan => return Self::NAN,
+            Value::Num(f) => f,
+        };
+        if f.is_infinite() {
+            return self.clone();
+        }
+        let p = prec.max(MIN_STEP_PRECISION);
+        let repr = f.repr();
+        let sig = repr.significand();
+        if sig.is_zero() {
+            // Documented zero convention: the magnitude is the ulp just above 1.
+            let unit = FBin::from_parts(IBig::from(1), 1 - (p as isize));
+            let unit = Self::num(unit.with_precision(p).value());
+            return if above { unit } else { -unit };
+        }
+        let digits = repr.digits();
+        if digits > p {
+            let mode = if above { Rounding::Up } else { Rounding::Down };
+            return self.round_to(p, mode);
+        }
+        // Stepping toward zero is the `above` move on a negative operand and the
+        // `below` move on a positive one.
+        let negative = *sig < IBig::from(0);
+        let toward_zero = above == negative;
+        let shift = if toward_zero && digits == 1 {
+            p
+        } else {
+            p - digits
+        };
+        let delta = if above { 1i64 } else { -1i64 };
+        let scaled = (sig.clone() << shift) + IBig::from(delta);
+        let exponent = repr.exponent() - (shift as isize);
+        let stepped = FBin::from_parts(scaled, exponent);
+        Self::num(stepped.with_precision(p).value())
     }
 
     /// Returns `true` if this is NaN.
@@ -1205,5 +1330,130 @@ mod tests {
         let f = BigFloat::from_integer(wide.clone());
         assert!(f.is_integer());
         assert_eq!(f.canonical_parts().unwrap().0, wide);
+    }
+
+    // ---- Private neighbor kernel (unit layer) -----------------------------
+
+    /// `(significand, exponent)` of a finite neighbor, for exact assertions.
+    fn parts(v: &BigFloat) -> (Integer, isize) {
+        v.canonical_parts().expect("finite neighbor")
+    }
+
+    /// Number of significant bits the backend stores for a finite value.
+    fn digits(v: &BigFloat) -> usize {
+        match &v.value {
+            Value::Num(f) => f.repr().digits(),
+            Value::Nan => panic!("NaN has no digit count"),
+        }
+    }
+
+    #[test]
+    fn normal_next_at_kernel_matches_public_directions() {
+        // The kernel's boolean direction is the single source of truth for both
+        // public entry points.
+        let third = BigFloat::one() / BigFloat::from_i64(3);
+        let vals = [
+            BigFloat::one(),
+            BigFloat::from_i64(8),
+            -BigFloat::from_i64(8),
+            third.clone(),
+            -third,
+        ];
+        for p in [11usize, 53, 165] {
+            for v in &vals {
+                assert_eq!(v.next_at(p, true), v.next_above(p));
+                assert_eq!(v.next_at(p, false), v.next_below(p));
+            }
+        }
+    }
+
+    #[test]
+    fn normal_next_at_half_step_below_power_of_two() {
+        // Binades get coarser upward, so stepping toward zero from a power of
+        // two uses half the step: below 1 the grid is 2^-53, above it 2^-52.
+        let one = BigFloat::one();
+        let up = one.next_at(53, true);
+        let down = one.next_at(53, false);
+        assert_eq!(parts(&up), (Integer::from((1i64 << 52) + 1), -52));
+        assert_eq!(parts(&down), (Integer::from((1i64 << 53) - 1), -53));
+        // The same holds for a negative power of two, mirrored.
+        let neg = -one.clone();
+        assert_eq!(
+            parts(&neg.next_at(53, true)),
+            (Integer::from(-((1i64 << 53) - 1)), -53)
+        );
+        assert_eq!(
+            parts(&neg.next_at(53, false)),
+            (Integer::from(-(1i64 << 52) - 1), -52)
+        );
+        // And for a non-power-of-two the step is symmetric.
+        let three_halves = BigFloat::from_f64(1.5);
+        let up_parts = parts(&three_halves.next_at(53, true));
+        let down_parts = parts(&three_halves.next_at(53, false));
+        assert_eq!(up_parts.1, down_parts.1);
+        assert_eq!(up_parts.0 - down_parts.0, Integer::from(2));
+    }
+
+    #[test]
+    fn normal_next_at_carry_folds_into_exponent() {
+        // An all-ones significand steps onto the next power of two; the carry
+        // must be folded by normalization, not left as a p+1-bit significand.
+        for p in [4usize, 24, 53] {
+            let top = BigFloat::num(FBin::from_parts((IBig::from(1) << p) - IBig::from(1), 0));
+            let up = top.next_at(p, true);
+            assert_eq!(
+                up,
+                BigFloat::num(FBin::from_parts(IBig::from(1), p as isize))
+            );
+            assert!(up.is_integer());
+            assert_eq!(digits(&up), 1);
+            assert_eq!(up.next_at(p, false), top);
+        }
+    }
+
+    #[test]
+    fn extreme_next_at_clamps_tiny_precisions() {
+        // One significand bit cannot name a distinct neighbor, so widths below
+        // two bits are clamped up to the two-bit grid {1, 1.5, 2, 3, ...}.
+        let one = BigFloat::one();
+        let expected_up = one.next_at(MIN_STEP_PRECISION, true);
+        let expected_down = one.next_at(MIN_STEP_PRECISION, false);
+        for p in [0usize, 1, 2] {
+            assert_eq!(one.next_at(p, true), expected_up);
+            assert_eq!(one.next_at(p, false), expected_down);
+        }
+        assert_eq!(expected_up, BigFloat::from_f64(1.5));
+        assert_eq!(
+            expected_down,
+            BigFloat::num(FBin::from_parts(IBig::from(3), -2))
+        );
+    }
+
+    #[test]
+    fn extreme_next_at_result_carries_requested_precision() {
+        // The precision label matters to the interval layer, which rounds
+        // outward at the widest endpoint precision.
+        for p in [2usize, 11, 53, 300] {
+            let v = BigFloat::one().next_at(p, true);
+            assert_eq!(v.precision(), p.max(MIN_STEP_PRECISION));
+            assert!(digits(&v) <= p.max(MIN_STEP_PRECISION));
+        }
+    }
+
+    #[test]
+    fn robustness_next_at_wide_precision_terminates() {
+        // Very wide queries stay exact-integer work and must round-trip.
+        let one = BigFloat::one();
+        for p in [1000usize, 4096] {
+            let up = one.next_at(p, true);
+            assert_eq!(up.next_at(p, false), one);
+            assert!(one < up);
+        }
+        // Extreme exponents must not materialize a huge shifted significand
+        // beyond the requested width.
+        let tiny = BigFloat::num(FBin::from_parts(IBig::from(1), -100_000));
+        let up = tiny.next_at(53, true);
+        assert!(tiny < up);
+        assert_eq!(up.next_at(53, false), tiny);
     }
 }
