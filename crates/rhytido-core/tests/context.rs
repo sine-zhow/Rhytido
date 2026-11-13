@@ -108,3 +108,84 @@ fn robustness_repeated_setters_idempotent() {
     assert_eq!(ctx.precision(), 53);
     assert_eq!(ctx.rounding(), Rounding::Nearest);
 }
+
+// ---- Taylor recursion setting (M2-D, additive) ------------------------
+
+#[test]
+fn normal_taylor_recursions_default_and_setter() {
+    assert_eq!(Context::new().taylor_recursions(), 0);
+    assert_eq!(Context::default().taylor_recursions(), 0);
+    let ctx = Context::new().with_taylor_recursions(3);
+    assert_eq!(ctx.taylor_recursions(), 3);
+    // Setting it does not disturb the other settings.
+    assert_eq!(ctx.precision(), DEFAULT_PRECISION);
+    assert_eq!(ctx.rounding(), Rounding::Nearest);
+}
+
+#[test]
+fn normal_taylor_builder_chains_with_other_settings() {
+    let ctx = Context::new()
+        .with_precision(100)
+        .with_rounding(Rounding::Up)
+        .with_taylor_recursions(2);
+    assert_eq!(ctx.precision(), 100);
+    assert_eq!(ctx.rounding(), Rounding::Up);
+    assert_eq!(ctx.taylor_recursions(), 2);
+    // Builder order does not matter.
+    let other = Context::new()
+        .with_taylor_recursions(2)
+        .with_rounding(Rounding::Up)
+        .with_precision(100);
+    assert_eq!(ctx, other);
+}
+
+#[test]
+fn extreme_taylor_recursions_bounds() {
+    assert_eq!(
+        Context::new().with_taylor_recursions(0).taylor_recursions(),
+        0
+    );
+    assert_eq!(
+        Context::new()
+            .with_taylor_recursions(u32::MAX)
+            .taylor_recursions(),
+        u32::MAX
+    );
+}
+
+#[test]
+fn error_taylor_setting_preserves_precision_clamp() {
+    // The taylor setting is independent of precision validation: an
+    // under-minimum precision is still clamped, and no u32 value panics.
+    let ctx = Context::new().with_precision(0).with_taylor_recursions(7);
+    assert_eq!(ctx.precision(), MIN_PRECISION);
+    assert_eq!(ctx.taylor_recursions(), 7);
+}
+
+#[test]
+fn robustness_taylor_copy_and_hash_consistent() {
+    let ctx = Context::new().with_precision(64).with_taylor_recursions(5);
+    let copied = ctx; // Copy
+    assert_eq!(ctx, copied);
+    assert_eq!(ctx.taylor_recursions(), copied.taylor_recursions());
+    let hash = |c: &Context| {
+        let mut h = DefaultHasher::new();
+        c.hash(&mut h);
+        h.finish()
+    };
+    assert_eq!(hash(&ctx), hash(&copied));
+    // The new field participates in equality (a different k is a different ctx).
+    let different = ctx.with_taylor_recursions(6);
+    assert_ne!(ctx, different);
+}
+
+#[test]
+fn robustness_taylor_repeated_setters_idempotent() {
+    let ctx = Context::new()
+        .with_taylor_recursions(4)
+        .with_taylor_recursions(4);
+    assert_eq!(ctx.taylor_recursions(), 4);
+    // Last write wins.
+    let ctx = ctx.with_taylor_recursions(9);
+    assert_eq!(ctx.taylor_recursions(), 9);
+}

@@ -88,7 +88,11 @@ pub enum Expr {
 /// Identical expressions (by canonical structure) are interned to the same
 /// [`NodeId`]. Constants are compared by canonical value (significand and
 /// exponent), independent of working precision, with signed zero distinguished.
-#[derive(Default)]
+///
+/// `Clone` produces an independent arena with the same node ordering, so a
+/// [`NodeId`] from the original stays valid in the clone. The Taylor refiner
+/// ([`crate::taylor`]) uses this to differentiate under an immutable borrow.
+#[derive(Default, Clone)]
 pub struct Interner {
     nodes: Vec<Expr>,
     buckets: HashMap<u64, Vec<NodeId>>,

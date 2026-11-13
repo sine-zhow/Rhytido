@@ -928,3 +928,156 @@ fn robustness_certificate_error_bounds_hold_for_every_state() {
         }
     }
 }
+
+// ---- Taylor intersection integration (M2-D) ---------------------------
+
+#[test]
+fn normal_taylor_intersection_collapses_a_dependency_zero() {
+    // f = x - x is identically zero. At a two-bit target the naive enclosure
+    // of a wide input straddles zero with representable endpoints, which no
+    // certification test can resolve (without the refinement the engine would
+    // escalate to the budget and report NotFaithful, the same shape as
+    // `extreme_exact_zero_from_a_margined_kernel_escalates_to_not_faithful`).
+    // The mean-value form evaluates f(m) = m - m = 0 exactly and f' = 1 - 1 = 0,
+    // so the intersection collapses to the point zero and Test 1 certifies
+    // Exact in the first round.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let f = it.intern(Expr::Sub(x, x));
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    let (result, stats) = eval(&it, f, &third, 2);
+    assert_eq!(result.quality(), Quality::Exact);
+    assert!(result.value().is_zero());
+    assert!(result.value().is_sign_positive());
+    assert_eq!(stats.rounds(), 1);
+    assert_eq!(stats.final_precision(), 2 + 10);
+}
+
+#[test]
+fn normal_taylor_recursions_from_context_collapse_the_pathology() {
+    // f = x*x - (x-1)*(x+1) - 1 is identically zero but dependency-heavy.
+    // With k = 0 the slope f'(xI) still carries dependency, so the early
+    // rounds stay unresolved; with k = 1 (ctx.with_taylor_recursions) the
+    // rule is re-applied to the derivative, whose own derivative is the
+    // constant 2 - 2 = 0, and the enclosure collapses to the point zero at
+    // once. The input 1/2 + 2^-40 has a dyadic midpoint (1/2 + 2^-13) at the
+    // first working precision, so f(m) and f'(m) are exact at the guard width.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let one = c(&mut it, 1);
+    let xx = it.intern(Expr::Mul(x, x));
+    let xm1 = it.intern(Expr::Sub(x, one));
+    let xp1 = it.intern(Expr::Add(x, one));
+    let prod = it.intern(Expr::Mul(xm1, xp1));
+    let diff = it.intern(Expr::Sub(xx, prod));
+    let f = it.intern(Expr::Sub(diff, one));
+    let arg = pow2(-1) + pow2(-40);
+
+    let k1 = ctx(2).with_taylor_recursions(1);
+    let (result, stats) = evaluate_faithful(&it, f, &arg, &k1, None, None);
+    assert_eq!(result.quality(), Quality::Exact);
+    assert!(result.value().is_zero());
+    assert_eq!(stats.rounds(), 1, "k = 1 collapses in the first round");
+    assert_eq!(stats.final_precision(), 12);
+
+    // k = 0 needs the loop to grow the input into a point before the naive
+    // walk itself collapses: same value, strictly more rounds.
+    let (result0, stats0) = eval(&it, f, &arg, 2);
+    assert_eq!(result0.quality(), Quality::Exact);
+    assert!(result0.value().is_zero());
+    assert!(stats0.rounds() > 1, "k = 0 cannot collapse immediately");
+    assert!(stats0.final_precision() <= 512 * 2);
+}
+
+#[test]
+fn normal_intersection_preserves_known_correct_roundings() {
+    // Point inputs are the documented eval_taylor fallback, so wrapping the
+    // known-table constants in the variable must not change value,
+    // certificate, or statistics.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let two = c(&mut it, 2);
+    let one = c(&mut it, 1);
+    let sqrt_x = apply(&mut it, BaseFn::Sqrt, x);
+    let sqrt2 = apply(&mut it, BaseFn::Sqrt, two);
+    let exp_x = apply(&mut it, BaseFn::Exp, x);
+    let exp1 = apply(&mut it, BaseFn::Exp, one);
+    let erf_x = apply(&mut it, BaseFn::Erf, x);
+    let erf1 = apply(&mut it, BaseFn::Erf, one);
+    let cases = [
+        (sqrt_x, sqrt2, BigFloat::from_i64(2)),
+        (exp_x, exp1, BigFloat::one()),
+        (erf_x, erf1, BigFloat::one()),
+    ];
+    for (vid, cid, arg) in cases {
+        let via_var = eval(&it, vid, &arg, P);
+        let via_const = eval(&it, cid, &BigFloat::zero(), P);
+        assert_eq!(via_var.0, via_const.0, "value/certificate drifted");
+        assert_eq!(via_var.1, via_const.1, "statistics drifted");
+        assert!(via_var.0.is_correctly_rounded());
+    }
+}
+
+#[test]
+fn normal_wide_input_sqrt_still_correctly_rounds_with_the_intersection() {
+    // A genuinely wide input (more significant bits than the working
+    // precision) through a nontrivial expression: the intersection may only
+    // narrow, so the first-round Test 1 conclusion is unchanged.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let sqrt_x = apply(&mut it, BaseFn::Sqrt, x);
+    let arg = BigFloat::from_i64(2) + pow2(-70);
+    let (result, stats) = eval(&it, sqrt_x, &arg, P);
+    assert_eq!(result.quality(), Quality::CorrectlyRounded);
+    assert_eq!(
+        result.value(),
+        &BigFloat::from_f64(std::f64::consts::SQRT_2)
+    );
+    assert_eq!(stats.rounds(), 1);
+    let reference = reference(&it, sqrt_x, &arg, P, 100);
+    assert_eq!(result.value(), &reference.round_to(P, Rounding::Nearest));
+}
+
+#[test]
+fn error_nonreal_variable_expressions_stay_nonreal() {
+    // The refinement must not resurrect a non-real conclusion: ln(0), 1/0
+    // and sqrt(-1) through the variable keep the contract's decision order
+    // (non-real is decided before any refinement).
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let one = c(&mut it, 1);
+    let ln_x = apply(&mut it, BaseFn::Ln, x);
+    let recip = it.intern(Expr::Div(one, x));
+    let sqrt_x = apply(&mut it, BaseFn::Sqrt, x);
+    let (result, stats) = eval(&it, ln_x, &BigFloat::zero(), P);
+    assert_eq!(result.quality(), Quality::NonReal);
+    assert_eq!(result.value(), &BigFloat::neg_infinity());
+    assert_eq!(stats.rounds(), 1);
+    let (result, stats) = eval(&it, recip, &BigFloat::zero(), P);
+    assert_eq!(result.quality(), Quality::NonReal);
+    assert!(result.value().is_nan());
+    assert_eq!(stats.rounds(), 1);
+    let (result, stats) = eval(&it, sqrt_x, &BigFloat::from_i64(-1), P);
+    assert_eq!(result.quality(), Quality::NonReal);
+    assert!(result.value().is_nan());
+    assert_eq!(stats.rounds(), 1);
+}
+
+#[test]
+fn robustness_taylor_integration_is_deterministic() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let f = it.intern(Expr::Sub(x, x));
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    let first = eval(&it, f, &third, 2);
+    let second = eval(&it, f, &third, 2);
+    assert_eq!(first.0, second.0);
+    assert_eq!(first.1, second.1);
+    // The recursion setting is part of the input: same k, same answer.
+    let kctx = ctx(2).with_taylor_recursions(2);
+    let a = evaluate_faithful(&it, f, &third, &kctx, None, None);
+    let b = evaluate_faithful(&it, f, &third, &kctx, None, None);
+    assert_eq!(a.0, b.0);
+    assert_eq!(a.1, b.1);
+    assert_eq!(a.0.quality(), Quality::Exact);
+}

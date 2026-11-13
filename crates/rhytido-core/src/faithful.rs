@@ -55,6 +55,28 @@
 //! grid missed); reporting a faithful value instead would contradict the order.
 //! A second faithful conclusion is *not* adopted, for the reason above.
 //!
+//! # Taylor refinement of the enclosure (M2-D)
+//!
+//! When the expression contains the free variable, each round's naive
+//! enclosure is intersected with the mean-value (Taylor) enclosure
+//! [`eval_taylor`] at the same working precision, with the recursion count
+//! `k` taken from [`Context::taylor_recursions`]. Both enclosures contain the
+//! true value (up to the shared guard-residual model of
+//! [`crate::interval_eval`]), so their intersection still contains it: a value
+//! that lies in both ranges lies in the overlap. The intersection is a subset
+//! of the naive enclosure, so it only ever narrows — which is what tightens
+//! dependency blow-up (`x·x − (x−1)(x+1) − 1` is identically zero, but the
+//! naive walk is wide while the mean-value form collapses it).
+//!
+//! Fallback protection: if either enclosure is not a bounded real (NaN,
+//! empty, or an infinite endpoint), or the overlap is empty — impossible for
+//! two valid enclosures of the same value, so only a rounding artifact can
+//! produce it — the naive enclosure is kept unchanged. The non-real / cutoff
+//! decision order is therefore untouched: refinement never turns a non-real
+//! conclusion into a real one, and never widens a range. Point inputs skip
+//! the refinement entirely: [`eval_taylor`] documents the naive fallback
+//! there, so the intersection would be a no-op.
+//!
 //! # Cutoff, non-real, and giving up
 //!
 //! * `cutoff` (a strictly positive magnitude): if the whole enclosure fits in
@@ -95,13 +117,16 @@
 //! * **Non-real value** — the sheet says `NaN`; the engine reports the offending
 //!   endpoint (see the `non_real` helper below).
 
+use std::collections::HashSet;
+
 use rhytido_backend::{BigFloat, Interval, Rounding};
 
 use crate::context::Context;
-use crate::expr::{Interner, NodeId};
+use crate::expr::{Expr, Interner, NodeId};
 use crate::fpresult::FpResult;
 use crate::interval_eval::{IntervalFnHook, eval_interval};
 use crate::quality::Quality;
+use crate::taylor::eval_taylor;
 
 /// Extra bits above the target precision for the first refinement round.
 ///
@@ -119,12 +144,14 @@ const MAX_PRECISION_MULTIPLIER: usize = 512;
 /// Statistics of one faithful evaluation.
 ///
 /// Both fields are part of the engine's observability contract: the number of
-/// interval evaluations performed (including the "one more unit" retry) and the
-/// working precision of the last one. `rounds` is saturating, so it counts up
-/// to `u32::MAX` evaluations without wrapping or panicking.
+/// refinement rounds performed (including the "one more unit" retry) and the
+/// working precision of the last one. A round's Taylor refinement (when it
+/// applies) is internal to the round and is not counted as a separate round.
+/// `rounds` is saturating, so it counts up to `u32::MAX` rounds without
+/// wrapping or panicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct EngineStats {
-    /// Number of interval evaluations performed (at least one).
+    /// Number of refinement rounds performed (at least one).
     pub rounds: u32,
     /// Working precision, in bits, of the last evaluation performed.
     pub final_precision: usize,
@@ -164,7 +191,9 @@ enum Verdict {
 /// Evaluates `id` at the point `x` and returns the target-precision result with
 /// its quality certificate, plus engine statistics.
 ///
-/// `ctx` supplies the target precision; the certification tests are stated for
+/// `ctx` supplies the target precision and the Taylor recursion setting
+/// ([`Context::taylor_recursions`], see the module documentation's "Taylor
+/// refinement of the enclosure"); the certification tests are stated for
 /// round-to-nearest, which is the faithful-engine contract of
 /// `docs/plan/M2-plan.md` §2. `cutoff`, when present and strictly positive,
 /// replaces negligible results by zero with `Quality::BelowCutoff`. `hook`,
@@ -206,12 +235,15 @@ pub fn evaluate_faithful(
     hook: Option<&dyn IntervalFnHook>,
 ) -> (FpResult, EngineStats) {
     let target = ctx.precision();
+    let k = ctx.taylor_recursions();
     let budget = target.saturating_mul(MAX_PRECISION_MULTIPLIER);
     let mut precision = target.saturating_add(START_GUARD_BITS);
     let mut rounds: u32 = 0;
     loop {
         rounds = rounds.saturating_add(1);
-        let enc = eval_interval(it, id, &input_interval(x, precision), precision, hook);
+        let input = input_interval(x, precision);
+        let naive = eval_interval(it, id, &input, precision, hook);
+        let enc = refine_with_taylor(it, id, &input, &naive, precision, k, hook);
         let verdict = match certify_round(&enc, target, cutoff) {
             Round::NonReal(value) => {
                 return (
@@ -241,7 +273,9 @@ pub fn evaluate_faithful(
                     return (provisional, EngineStats::new(rounds, precision));
                 }
                 rounds = rounds.saturating_add(1);
-                let wide = eval_interval(it, id, &input_interval(x, retry), retry, hook);
+                let retry_input = input_interval(x, retry);
+                let wide_naive = eval_interval(it, id, &retry_input, retry, hook);
+                let wide = refine_with_taylor(it, id, &retry_input, &wide_naive, retry, k, hook);
                 // Adopted from the retry round: a Test 1 conclusion (upgrade),
                 // or the conclusions that precede the certification tests (see
                 // the module documentation). A second faithful conclusion is
@@ -333,6 +367,100 @@ fn input_interval(x: &BigFloat, precision: usize) -> Interval {
         x.round_to(precision, Rounding::Down),
         x.round_to(precision, Rounding::Up),
     )
+}
+
+/// Tightens a naive enclosure with the mean-value (Taylor) form.
+///
+/// The intersection argument and the fallback protection are documented in
+/// the module documentation ("Taylor refinement of the enclosure"). `input`
+/// is the round's argument interval and `naive` its [`eval_interval`]
+/// enclosure; `k` is the recursion setting from [`Context::taylor_recursions`].
+fn refine_with_taylor(
+    it: &Interner,
+    id: NodeId,
+    input: &Interval,
+    naive: &Interval,
+    prec: usize,
+    k: u32,
+    hook: Option<&dyn IntervalFnHook>,
+) -> Interval {
+    // Constant expressions have no dependency to tighten; the contract gates
+    // the refinement on the presence of the free variable.
+    if !contains_variable(it, id) {
+        return naive.clone();
+    }
+    // A point input is the documented naive fallback of `eval_taylor`, so the
+    // intersection would be a no-op; skip the duplicated evaluation.
+    if input.is_point() {
+        return naive.clone();
+    }
+    // A non-real naive enclosure keeps the contract's decision order: the
+    // refinement must not turn a NaN/empty/unbounded conclusion into a real
+    // one (module documentation).
+    let bounded = match pair(naive) {
+        Some((lo, hi)) => lo.is_finite() && hi.is_finite(),
+        None => false,
+    };
+    if !bounded {
+        return naive.clone();
+    }
+    let taylor = eval_taylor(it, id, input, prec, k, hook);
+    intersect_enclosures(naive, &taylor)
+}
+
+/// Intersects two enclosures of the same value, falling back to `naive`.
+///
+/// Both ranges contain the true value, so the overlap does too; the result is
+/// a subset of `naive` (never wider). If either range is not a bounded real,
+/// or the overlap is empty or NaN — impossible for two valid enclosures, so
+/// only a rounding artifact can produce it — `naive` is returned unchanged.
+/// Endpoint ties keep the naive endpoint, so an intersection that does not
+/// tighten reproduces `naive` bitwise (signed zero included).
+fn intersect_enclosures(naive: &Interval, taylor: &Interval) -> Interval {
+    let (nlo, nhi) = match pair(naive) {
+        Some(p) => p,
+        None => return naive.clone(),
+    };
+    let (tlo, thi) = match pair(taylor) {
+        Some(p) => p,
+        None => return naive.clone(),
+    };
+    if !nlo.is_finite() || !nhi.is_finite() || !tlo.is_finite() || !thi.is_finite() {
+        return naive.clone();
+    }
+    let lo = if tlo > nlo { tlo } else { nlo };
+    let hi = if thi < nhi { thi } else { nhi };
+    let overlap = Interval::new(lo, hi);
+    if overlap.is_empty() || overlap.is_nan() {
+        return naive.clone();
+    }
+    overlap
+}
+
+/// Whether `id` contains the free variable anywhere in its DAG.
+///
+/// Memoized over the interned nodes so a shared subtree is visited once. A
+/// revisited node answered `false` on its first complete visit (a `true`
+/// would have short-circuited the whole walk), so skipping it is sound.
+fn contains_variable(it: &Interner, id: NodeId) -> bool {
+    let mut seen = HashSet::new();
+    contains_variable_rec(it, id, &mut seen)
+}
+
+/// Recursive worker of [`contains_variable`].
+fn contains_variable_rec(it: &Interner, id: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    match it.get(id) {
+        Expr::Variable => true,
+        Expr::Constant(_) | Expr::Pi => false,
+        Expr::Neg(a) => contains_variable_rec(it, *a, seen),
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) | Expr::Pow(a, b) => {
+            contains_variable_rec(it, *a, seen) || contains_variable_rec(it, *b, seen)
+        }
+        Expr::Apply(_, a) => contains_variable_rec(it, *a, seen),
+    }
 }
 
 /// Endpoints of a bounded enclosure as a pair, `None` for NaN or empty.
@@ -494,6 +622,7 @@ fn ceil_five_quarters(w: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expr::BaseFn;
 
     fn bf(v: f64) -> BigFloat {
         BigFloat::from_f64(v)
@@ -853,5 +982,154 @@ mod tests {
         // Zero is not a side of itself.
         assert!(!straddles_zero(&BigFloat::zero(), &bf(1.0)));
         assert!(!straddles_zero(&-BigFloat::zero(), &bf(1.0)));
+    }
+
+    // ---- contains_variable --------------------------------------------
+
+    #[test]
+    fn normal_contains_variable_walks_the_shared_dag() {
+        let mut it = Interner::new();
+        let x = it.intern(Expr::Variable);
+        let one = it.intern(Expr::Constant(BigFloat::one()));
+        let pi = it.intern(Expr::Pi);
+        assert!(contains_variable(&it, x));
+        assert!(!contains_variable(&it, one));
+        assert!(!contains_variable(&it, pi));
+        let sum = it.intern(Expr::Add(one, pi));
+        assert!(!contains_variable(&it, sum));
+        // Shared subtree: g = sin x used twice is visited once and found.
+        let g = it.intern(Expr::Apply(BaseFn::Sin, x));
+        let f = it.intern(Expr::Add(g, g));
+        assert!(contains_variable(&it, f));
+        // The variable buried under Neg/Div/Pow is still found.
+        let pow = it.intern(Expr::Pow(x, one));
+        let div = it.intern(Expr::Div(one, pow));
+        let deep = it.intern(Expr::Neg(div));
+        assert!(contains_variable(&it, deep));
+    }
+
+    // ---- intersect_enclosures -----------------------------------------
+
+    #[test]
+    fn normal_intersect_enclosures_narrows_to_the_overlap() {
+        let naive = enc(BigFloat::zero(), BigFloat::from_i64(10));
+        let taylor = enc(BigFloat::from_i64(2), BigFloat::from_i64(8));
+        let out = intersect_enclosures(&naive, &taylor);
+        assert_eq!(out.lower().expect("range"), BigFloat::from_i64(2));
+        assert_eq!(out.upper().expect("range"), BigFloat::from_i64(8));
+        // A wider Taylor range reproduces the naive one bitwise.
+        let wider = enc(-BigFloat::from_i64(5), BigFloat::from_i64(15));
+        let out = intersect_enclosures(&naive, &wider);
+        assert!(same_bits(
+            &out.lower().expect("range"),
+            &naive.lower().expect("range")
+        ));
+        assert!(same_bits(
+            &out.upper().expect("range"),
+            &naive.upper().expect("range")
+        ));
+        // Partial overlap on both sides.
+        let shifted = enc(BigFloat::from_i64(4), BigFloat::from_i64(12));
+        let out = intersect_enclosures(&naive, &shifted);
+        assert_eq!(out.lower().expect("range"), BigFloat::from_i64(4));
+        assert_eq!(out.upper().expect("range"), BigFloat::from_i64(10));
+    }
+
+    #[test]
+    fn extreme_intersect_enclosures_ties_keep_the_naive_signed_zero() {
+        let naive = enc(-BigFloat::zero(), BigFloat::zero());
+        let taylor = Interval::point(BigFloat::zero());
+        let out = intersect_enclosures(&naive, &taylor);
+        // Numerically equal endpoints tie: the naive signs survive.
+        assert!(same_bits(&out.lower().expect("range"), &-BigFloat::zero()));
+        assert!(same_bits(&out.upper().expect("range"), &BigFloat::zero()));
+        // A strictly interior Taylor point does narrow.
+        let inner = Interval::point(BigFloat::from_i64(3));
+        let out = intersect_enclosures(&enc(BigFloat::zero(), BigFloat::from_i64(10)), &inner);
+        assert!(out.is_point());
+        assert_eq!(out.lower().expect("point"), BigFloat::from_i64(3));
+    }
+
+    #[test]
+    fn error_intersect_enclosures_falls_back_on_empty_nan_or_unbounded() {
+        let naive = enc(BigFloat::zero(), BigFloat::one());
+        // Disjoint: only a rounding artifact can produce this; keep naive.
+        let disjoint = enc(BigFloat::from_i64(2), BigFloat::from_i64(3));
+        let out = intersect_enclosures(&naive, &disjoint);
+        assert!(same_bits(&out.lower().expect("range"), &BigFloat::zero()));
+        assert!(same_bits(&out.upper().expect("range"), &BigFloat::one()));
+        // NaN / empty / unbounded on either side: keep the naive side.
+        for bad in [
+            Interval::NAN,
+            Interval::empty(),
+            enc(BigFloat::one(), BigFloat::infinity()),
+            enc(BigFloat::neg_infinity(), BigFloat::zero()),
+        ] {
+            let out = intersect_enclosures(&naive, &bad);
+            assert!(same_bits(&out.lower().expect("range"), &BigFloat::zero()));
+            assert!(same_bits(&out.upper().expect("range"), &BigFloat::one()));
+            // A non-real naive side is returned unchanged.
+            let out = intersect_enclosures(&bad, &naive);
+            assert_eq!(out.is_nan(), bad.is_nan());
+            assert_eq!(out.is_empty(), bad.is_empty());
+        }
+    }
+
+    // ---- refine_with_taylor -------------------------------------------
+
+    #[test]
+    fn normal_refine_with_taylor_collapses_a_dependency_zero() {
+        let mut it = Interner::new();
+        let x = it.intern(Expr::Variable);
+        let f = it.intern(Expr::Sub(x, x));
+        let input = enc(bf(0.6), bf(0.7));
+        let naive = eval_interval(&it, f, &input, 53, None);
+        assert!(!naive.is_point(), "the naive walk of x - x has width");
+        let refined = refine_with_taylor(&it, f, &input, &naive, 53, 0, None);
+        assert!(refined.is_point(), "the mean-value form collapses x - x");
+        assert!(refined.contains(&BigFloat::zero()));
+        // The refined range is a subset of the naive one (never wider).
+        assert!(naive.contains(&refined.lower().expect("point")));
+        assert!(naive.contains(&refined.upper().expect("point")));
+    }
+
+    #[test]
+    fn normal_refine_with_taylor_skips_constants_and_point_inputs() {
+        let mut it = Interner::new();
+        let two = it.intern(Expr::Constant(BigFloat::from_i64(2)));
+        let sqrt2 = it.intern(Expr::Apply(BaseFn::Sqrt, two));
+        let input = enc(bf(0.6), bf(0.7));
+        let naive = eval_interval(&it, sqrt2, &input, 53, None);
+        let refined = refine_with_taylor(&it, sqrt2, &input, &naive, 53, 0, None);
+        assert!(same_bits(
+            &refined.lower().expect("range"),
+            &naive.lower().expect("range")
+        ));
+        assert!(same_bits(
+            &refined.upper().expect("range"),
+            &naive.upper().expect("range")
+        ));
+        // Point input: the documented eval_taylor fallback makes this a no-op.
+        let x = it.intern(Expr::Variable);
+        let point_input = Interval::point(bf(1.5));
+        let naive = eval_interval(&it, x, &point_input, 53, None);
+        let refined = refine_with_taylor(&it, x, &point_input, &naive, 53, 0, None);
+        assert!(same_bits(
+            &refined.lower().expect("range"),
+            &naive.lower().expect("range")
+        ));
+    }
+
+    #[test]
+    fn error_refine_with_taylor_keeps_non_real_naive_enclosures() {
+        let mut it = Interner::new();
+        let x = it.intern(Expr::Variable);
+        let one = it.intern(Expr::Constant(BigFloat::one()));
+        let recip = it.intern(Expr::Div(one, x));
+        let input = enc(-BigFloat::one(), BigFloat::one());
+        let naive = eval_interval(&it, recip, &input, 53, None);
+        assert!(naive.is_nan(), "1/x over a zero-spanning interval");
+        let refined = refine_with_taylor(&it, recip, &input, &naive, 53, 0, None);
+        assert!(refined.is_nan(), "the non-real conclusion must survive");
     }
 }
