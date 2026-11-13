@@ -25,6 +25,8 @@ fn base_fn_name(f: BaseFn) -> &'static str {
     match f {
         BaseFn::Sqrt => "sqrt",
         BaseFn::Exp => "exp",
+        // The natural logarithm prints as "ln"; the "log" alias belongs to the
+        // M3 parser layer, not to the canonical printer.
         BaseFn::Ln => "ln",
         BaseFn::Sin => "sin",
         BaseFn::Cos => "cos",
@@ -40,6 +42,19 @@ fn base_fn_name(f: BaseFn) -> &'static str {
         BaseFn::Atanh => "atanh",
         BaseFn::Erf => "erf",
         BaseFn::Erfc => "erfc",
+        BaseFn::Log2 => "log2",
+        BaseFn::Log10 => "log10",
+        BaseFn::Log1p => "log1p",
+        BaseFn::Expm1 => "expm1",
+        BaseFn::Abs => "abs",
+        BaseFn::Ceil => "ceil",
+        BaseFn::Floor => "floor",
+        BaseFn::NearestInt => "nearestint",
+        BaseFn::Double => "double",
+        BaseFn::Single => "single",
+        BaseFn::HalfPrecision => "halfprecision",
+        BaseFn::Quad => "quad",
+        BaseFn::DoubleExtended => "doubleextended",
     }
 }
 

@@ -182,7 +182,7 @@ fn normal_erf_erfc_variants_intern_distinctly() {
 
 #[test]
 fn robustness_every_base_fn_variant_interns() {
-    // Exhaustive interning check over all seventeen variants, so a future
+    // Exhaustive interning check over all thirty variants, so a future
     // variant cannot silently collide with an existing one.
     let mut it = Interner::new();
     let x = it.intern(Expr::Variable);
@@ -204,8 +204,21 @@ fn robustness_every_base_fn_variant_interns() {
         BaseFn::Atanh,
         BaseFn::Erf,
         BaseFn::Erfc,
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
     ];
-    assert_eq!(fns.len(), 17);
+    assert_eq!(fns.len(), 30);
     let nodes: Vec<NodeId> = fns.iter().map(|f| it.intern(Expr::Apply(*f, x))).collect();
     for (i, a) in nodes.iter().enumerate() {
         for b in nodes.iter().skip(i + 1) {
@@ -242,4 +255,123 @@ fn robustness_all_node_kinds_intern() {
             assert_ne!(nodes[i], nodes[j]);
         }
     }
+}
+
+// ---- M2-E2 additions: the thirteen new BaseFn variants ------------------
+
+#[test]
+fn normal_m2e2_new_variants_intern_distinctly() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let new_fns = [
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ];
+    let nodes: Vec<NodeId> = new_fns
+        .iter()
+        .map(|f| it.intern(Expr::Apply(*f, x)))
+        .collect();
+    // Dedup with themselves, distinct from each other.
+    for (f, &id) in new_fns.iter().zip(&nodes) {
+        assert_eq!(it.intern(Expr::Apply(*f, x)), id);
+    }
+    for (i, a) in nodes.iter().enumerate() {
+        for b in nodes.iter().skip(i + 1) {
+            assert_ne!(a, b);
+        }
+    }
+    assert_eq!(it.len(), 1 + new_fns.len());
+}
+
+#[test]
+fn error_m2e2_log_variants_never_merge_with_ln() {
+    // A swapped dispatch or hash would be caught here: the four logarithm
+    // family variants are pairwise distinct nodes.
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let ln = it.intern(Expr::Apply(BaseFn::Ln, x));
+    let log2 = it.intern(Expr::Apply(BaseFn::Log2, x));
+    let log10 = it.intern(Expr::Apply(BaseFn::Log10, x));
+    let log1p = it.intern(Expr::Apply(BaseFn::Log1p, x));
+    assert_ne!(ln, log2);
+    assert_ne!(ln, log10);
+    assert_ne!(ln, log1p);
+    assert_ne!(log2, log10);
+    assert_ne!(log2, log1p);
+    assert_ne!(log10, log1p);
+}
+
+#[test]
+fn normal_m2e2_is_smooth_classifies_the_whole_family() {
+    // The Taylor refiner's fallback predicate: the elementary family plus the
+    // four new smooth functions are smooth; abs, the integer roundings and
+    // the format conversions are not.
+    let smooth = [
+        BaseFn::Sqrt,
+        BaseFn::Exp,
+        BaseFn::Ln,
+        BaseFn::Sin,
+        BaseFn::Cos,
+        BaseFn::Tan,
+        BaseFn::Asin,
+        BaseFn::Acos,
+        BaseFn::Atan,
+        BaseFn::Sinh,
+        BaseFn::Cosh,
+        BaseFn::Tanh,
+        BaseFn::Asinh,
+        BaseFn::Acosh,
+        BaseFn::Atanh,
+        BaseFn::Erf,
+        BaseFn::Erfc,
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+    ];
+    let non_smooth = [
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ];
+    assert_eq!(smooth.len() + non_smooth.len(), 30);
+    for f in smooth {
+        assert!(f.is_smooth(), "{f:?} must be smooth");
+    }
+    for f in non_smooth {
+        assert!(!f.is_smooth(), "{f:?} must be non-smooth");
+    }
+}
+
+#[test]
+fn robustness_m2e2_shared_non_smooth_subtree_interns_once() {
+    // A shared non-smooth subtree (abs x) used twice stays one node, so the
+    // memoized walks (contains_variable / contains_non_smooth) see it once.
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let sum = it.intern(Expr::Add(abs_x, abs_x));
+    let again = it.intern(Expr::Add(abs_x, abs_x));
+    assert_eq!(sum, again);
+    assert_eq!(it.len(), 3); // x, abs x, sum
+    // The same argument under a different function is a different node.
+    let ceil_x = it.intern(Expr::Apply(BaseFn::Ceil, x));
+    assert_ne!(ceil_x, abs_x);
 }

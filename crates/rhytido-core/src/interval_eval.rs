@@ -43,7 +43,7 @@
 
 use std::collections::HashMap;
 
-use rhytido_backend::{BigFloat, Interval, Rounding};
+use rhytido_backend::{BigFloat, Format, Interval, Rounding};
 
 use crate::expr::{BaseFn, Expr, Interner, NodeId};
 
@@ -369,11 +369,14 @@ fn pow_interval(a: &Interval, b: &Interval) -> Interval {
 
 /// Dispatches a base function to the backend interval kernel.
 ///
-/// Every one of the seventeen [`BaseFn`] variants has an interval version in
-/// `rhytido-backend`: the elementary functions through the `map_mono` endpoint
-/// images or the rigorous extremum/pole lattices (`sin`/`cos`/`tan`), and the
-/// error functions through checked error bounds (`erf`/`erfc`). Each widens
-/// outward as documented in the backend.
+/// Every one of the thirty [`BaseFn`] variants has an interval version: the
+/// elementary functions through the `map_mono` endpoint images or the rigorous
+/// extremum/pole lattices (`sin`/`cos`/`tan`) in `rhytido-backend`, the error
+/// functions through checked error bounds (`erf`/`erfc`), the new smooth
+/// functions (`log2`/`log10`/`log1p`/`expm1`) and the rounding functions
+/// (`abs`/`ceil`/`floor`/`nearestint`) through their backend interval kernels,
+/// and the format conversions through directed endpoint rounding
+/// ([`format_interval`]). Each widens outward as documented in the backend.
 fn apply_interval(f: BaseFn, arg: &Interval) -> Interval {
     match f {
         BaseFn::Sqrt => arg.sqrt(),
@@ -393,6 +396,38 @@ fn apply_interval(f: BaseFn, arg: &Interval) -> Interval {
         BaseFn::Atanh => arg.atanh(),
         BaseFn::Erf => arg.erf(),
         BaseFn::Erfc => arg.erfc(),
+        BaseFn::Log2 => arg.log2(),
+        BaseFn::Log10 => arg.log10(),
+        BaseFn::Log1p => arg.log1p(),
+        BaseFn::Expm1 => arg.expm1(),
+        BaseFn::Abs => arg.abs(),
+        BaseFn::Ceil => arg.ceil(),
+        BaseFn::Floor => arg.floor(),
+        BaseFn::NearestInt => arg.nearestint(),
+        BaseFn::Double => format_interval(Format::Double, arg),
+        BaseFn::Single => format_interval(Format::Single, arg),
+        BaseFn::HalfPrecision => format_interval(Format::Half, arg),
+        BaseFn::Quad => format_interval(Format::Quad, arg),
+        BaseFn::DoubleExtended => format_interval(Format::DoubleExtended, arg),
+    }
+}
+
+/// Encloses format conversion by directed rounding of the endpoints.
+///
+/// Format rounding is monotone in every mode, and for any `x` in `[lo, hi]`
+/// `round_down(lo) <= round_nearest(x) <= round_up(hi)`, so rounding the lower
+/// endpoint down and the upper endpoint up to the format contains the whole
+/// image. The endpoints are then exactly representable at the format's width,
+/// so the outward rounding of [`Interval::new`] adds no further width. NaN and
+/// empty inputs propagate unchanged; infinite endpoints pass through
+/// `round_to_format` untouched.
+fn format_interval(format: Format, arg: &Interval) -> Interval {
+    match (arg.lower(), arg.upper()) {
+        (Some(lo), Some(hi)) => Interval::new(
+            lo.round_to_format(format, Rounding::Down),
+            hi.round_to_format(format, Rounding::Up),
+        ),
+        _ => arg.clone(),
     }
 }
 
@@ -461,6 +496,19 @@ mod tests {
             BaseFn::Atanh => w.atanh(),
             BaseFn::Erf => w.erf(),
             BaseFn::Erfc => w.erfc(),
+            BaseFn::Log2 => w.log2(),
+            BaseFn::Log10 => w.log10(),
+            BaseFn::Log1p => w.log1p(),
+            BaseFn::Expm1 => w.expm1(),
+            BaseFn::Abs => w.abs(),
+            BaseFn::Ceil => w.ceil(),
+            BaseFn::Floor => w.floor(),
+            BaseFn::NearestInt => w.nearestint(),
+            BaseFn::Double => w.round_to_format(Format::Double, Rounding::Nearest),
+            BaseFn::Single => w.round_to_format(Format::Single, Rounding::Nearest),
+            BaseFn::HalfPrecision => w.round_to_format(Format::Half, Rounding::Nearest),
+            BaseFn::Quad => w.round_to_format(Format::Quad, Rounding::Nearest),
+            BaseFn::DoubleExtended => w.round_to_format(Format::DoubleExtended, Rounding::Nearest),
         }
     }
 
@@ -706,6 +754,19 @@ mod tests {
             (BaseFn::Atanh, bf(0.5)),
             (BaseFn::Erf, bf(1.0)),
             (BaseFn::Erfc, bf(1.0)),
+            (BaseFn::Log2, bf(2.0)),
+            (BaseFn::Log10, bf(10.0)),
+            (BaseFn::Log1p, bf(0.5)),
+            (BaseFn::Expm1, bf(1.0)),
+            (BaseFn::Abs, bf(-2.0)),
+            (BaseFn::Ceil, bf(1.5)),
+            (BaseFn::Floor, bf(1.5)),
+            (BaseFn::NearestInt, bf(2.5)),
+            (BaseFn::Double, bf(0.1)),
+            (BaseFn::Single, bf(0.1)),
+            (BaseFn::HalfPrecision, bf(0.1)),
+            (BaseFn::Quad, bf(0.1)),
+            (BaseFn::DoubleExtended, bf(0.1)),
         ];
         let operand_prec = BigFloat::from_i64(2).precision();
         for (f, x) in cases {
@@ -728,6 +789,19 @@ mod tests {
             BaseFn::Erf,
             BaseFn::Erfc,
             BaseFn::Tan,
+            BaseFn::Log2,
+            BaseFn::Log10,
+            BaseFn::Log1p,
+            BaseFn::Expm1,
+            BaseFn::Abs,
+            BaseFn::Ceil,
+            BaseFn::Floor,
+            BaseFn::NearestInt,
+            BaseFn::Double,
+            BaseFn::Single,
+            BaseFn::HalfPrecision,
+            BaseFn::Quad,
+            BaseFn::DoubleExtended,
         ] {
             assert!(apply_interval(f, &Interval::NAN).is_nan(), "{f:?} NaN");
             assert!(
@@ -738,6 +812,10 @@ mod tests {
         // Out of domain: sqrt and ln of a negative point.
         assert!(apply_interval(BaseFn::Sqrt, &Interval::point(-BigFloat::one())).is_nan());
         assert!(apply_interval(BaseFn::Ln, &Interval::point(-BigFloat::one())).is_nan());
+        // The new logarithms share the domain conservatism of ln.
+        assert!(apply_interval(BaseFn::Log2, &Interval::point(-BigFloat::one())).is_nan());
+        assert!(apply_interval(BaseFn::Log10, &Interval::point(-BigFloat::one())).is_nan());
+        assert!(apply_interval(BaseFn::Log1p, &Interval::point(-BigFloat::from_i64(2))).is_nan());
     }
 
     // ---- eval_rec: the memoized walk, through the public entry point --

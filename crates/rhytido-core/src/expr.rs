@@ -56,6 +56,80 @@ pub enum BaseFn {
     Erf,
     /// Complementary error function.
     Erfc,
+    /// Base-2 logarithm (domain `x > 0`; `0 -> -infinity`, negative `-> NaN`).
+    Log2,
+    /// Base-10 logarithm (domain `x > 0`; `0 -> -infinity`, negative `-> NaN`).
+    Log10,
+    /// Natural logarithm of `1 + x`, accurate for small `x`
+    /// (domain `[-1, +infinity]`; `-1 -> -infinity`, below `-1 -> NaN`).
+    Log1p,
+    /// `exp(x) - 1`, accurate for small `x` (total on the reals).
+    Expm1,
+    /// Absolute value.
+    Abs,
+    /// Smallest integer not less than the argument.
+    Ceil,
+    /// Largest integer not greater than the argument.
+    Floor,
+    /// Nearest integer, ties to even.
+    NearestInt,
+    /// Round to binary64 (double), nearest rounding.
+    Double,
+    /// Round to binary32 (single), nearest rounding.
+    Single,
+    /// Round to binary16 (half precision), nearest rounding.
+    HalfPrecision,
+    /// Round to binary128 (quad), nearest rounding.
+    Quad,
+    /// Round to the double-extended format (64-bit significand), nearest
+    /// rounding.
+    DoubleExtended,
+}
+
+impl BaseFn {
+    /// Whether the function is smooth enough for the mean-value (Taylor) form.
+    ///
+    /// The elementary family is analytic on the interior of its domain, so the
+    /// mean-value theorem applies there. The absolute value has a kink at zero,
+    /// and the integer-rounding and format-conversion functions are step
+    /// functions: they are not differentiable at their breakpoints, so the
+    /// Taylor refiner ([`crate::taylor`]) must fall back to naive interval
+    /// evaluation for any expression containing them. The `match` is
+    /// exhaustive: a new variant must be classified here before it compiles.
+    pub fn is_smooth(self) -> bool {
+        match self {
+            BaseFn::Sqrt
+            | BaseFn::Exp
+            | BaseFn::Ln
+            | BaseFn::Sin
+            | BaseFn::Cos
+            | BaseFn::Tan
+            | BaseFn::Asin
+            | BaseFn::Acos
+            | BaseFn::Atan
+            | BaseFn::Sinh
+            | BaseFn::Cosh
+            | BaseFn::Tanh
+            | BaseFn::Asinh
+            | BaseFn::Acosh
+            | BaseFn::Atanh
+            | BaseFn::Erf
+            | BaseFn::Erfc
+            | BaseFn::Log2
+            | BaseFn::Log10
+            | BaseFn::Log1p
+            | BaseFn::Expm1 => true,
+            BaseFn::Abs
+            | BaseFn::Ceil
+            | BaseFn::Floor
+            | BaseFn::NearestInt
+            | BaseFn::Double
+            | BaseFn::Single
+            | BaseFn::HalfPrecision
+            | BaseFn::Quad
+            | BaseFn::DoubleExtended => false,
+        }
+    }
 }
 
 /// An expression node. Children are interned [`NodeId`]s.

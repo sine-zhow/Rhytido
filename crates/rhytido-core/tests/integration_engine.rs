@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rhytido_backend::{BigFloat, Interval, Rounding};
 use rhytido_core::{
-    BaseFn, Context, Expr, IntervalFnHook, Quality, eval_interval, eval_point, evaluate_faithful,
+    BaseFn, Context, Expr, IntervalFnHook, Quality, eval_interval, eval_point, eval_taylor,
+    evaluate_faithful, print_expr,
 };
 use rhytido_core::{Interner, NodeId};
 
@@ -733,4 +734,150 @@ fn robustness_certified_value_matches_the_engine_own_enclosure() {
             }
         }
     }
+}
+
+// ---- M2-E2: the new function family through the whole pipeline ----------
+
+#[test]
+fn normal_m2e2_new_function_pipeline_cross_checks() {
+    // interning -> printing -> point evaluation -> interval enclosure ->
+    // faithful certification, cross-checked against each other for every new
+    // function on an in-domain argument.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    let cases = [
+        (BaseFn::Log2, BigFloat::from_i64(8), "log2"),
+        (BaseFn::Log10, BigFloat::from_i64(1000), "log10"),
+        (BaseFn::Log1p, BigFloat::from_f64(0.5), "log1p"),
+        (BaseFn::Expm1, BigFloat::one(), "expm1"),
+        (BaseFn::Abs, BigFloat::from_f64(-2.5), "abs"),
+        (BaseFn::Ceil, BigFloat::from_f64(2.5), "ceil"),
+        (BaseFn::Floor, BigFloat::from_f64(2.5), "floor"),
+        (BaseFn::NearestInt, BigFloat::from_f64(2.5), "nearestint"),
+        (BaseFn::Double, third.clone(), "double"),
+        (BaseFn::Single, third.clone(), "single"),
+        (BaseFn::HalfPrecision, third.clone(), "halfprecision"),
+        (BaseFn::Quad, third.clone(), "quad"),
+        (BaseFn::DoubleExtended, third, "doubleextended"),
+    ];
+    for (f, arg, name) in cases {
+        let id = apply(&mut it, f, x);
+        // Printing: the canonical name with the free variable.
+        assert_eq!(print_expr(&it, id), format!("{name}(_x_)"));
+        // The interval enclosure at the target contains the wide point truth.
+        let reference = eval_point(&it, id, &arg, 153);
+        let enc = eval_interval(&it, id, &point(&arg), 53, None);
+        assert!(
+            enc.contains(&reference),
+            "{name}: enclosure {enc} misses the reference {reference}"
+        );
+        // The faithful engine agrees with the reference's target rounding
+        // whenever it certifies a correct rounding. A format conversion
+        // narrower than the target keeps a two-float enclosure at its own
+        // grid, which spans many target floats: the engine honestly gives up
+        // (NotFaithful) and reports the documented nearest image of the lower
+        // endpoint. A faithful certificate stays within one target ulp of
+        // the reference.
+        let (result, stats) = evaluate_faithful(&it, id, &arg, &ctx(53), None, None);
+        assert!(stats.rounds() >= 1);
+        if result.is_correctly_rounded() {
+            assert_eq!(
+                result.value(),
+                &reference.round_to(53, Rounding::Nearest),
+                "{name}: certificate {:?} disagrees with the reference",
+                result.quality()
+            );
+        } else if result.quality() == Quality::NotFaithful {
+            assert_eq!(
+                result.value(),
+                &enc.lower()
+                    .expect("bounded")
+                    .round_to(53, Rounding::Nearest),
+                "{name}: give-up value is not the lower endpoint's image"
+            );
+        } else {
+            assert!(result.is_faithful(), "{name}: {:?}", result.quality());
+            let err = (result.value().clone() - reference.clone()).abs();
+            assert!(
+                err <= ulp(result.value(), 53),
+                "{name}: error {err} exceeds one ulp (certificate {:?})",
+                result.quality()
+            );
+        }
+    }
+}
+
+#[test]
+fn normal_m2e2_non_smooth_pipeline_inclusion_across_breakpoints() {
+    // A composite mixing smooth and non-smooth functions: over a span that
+    // crosses integer and rounding breakpoints, both the naive and the
+    // Taylor-refined enclosures contain every sampled point truth, and the
+    // engine certifies the exact value at an interior point.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let ceil_x = apply(&mut it, BaseFn::Ceil, x);
+    let floor_x = apply(&mut it, BaseFn::Floor, x);
+    let double_x = apply(&mut it, BaseFn::Double, x);
+    let sin_x = apply(&mut it, BaseFn::Sin, x);
+    // f = sin(x) + ceil(x) - floor(x) + double(x).
+    let t1 = it.intern(Expr::Add(sin_x, ceil_x));
+    let t2 = it.intern(Expr::Sub(t1, floor_x));
+    let f = it.intern(Expr::Add(t2, double_x));
+    let span = Interval::new(BigFloat::from_f64(1.25), BigFloat::from_f64(2.75));
+    let naive = eval_interval(&it, f, &span, 53, None);
+    let refined = eval_taylor(&it, f, &span, 53, 1, None);
+    // An exact dyadic grid (step 3/32): every sample is represented exactly,
+    // so no grid drift can place a probe outside the span.
+    let lo = BigFloat::from_f64(1.25);
+    let step = BigFloat::from_i64(3) / BigFloat::from_i64(32);
+    for i in 0..=16i64 {
+        let xv = lo.clone() + step.clone() * BigFloat::from_i64(i);
+        let truth = eval_point(&it, f, &xv, 200);
+        assert!(naive.contains(&truth), "naive {naive} misses sample {i}");
+        assert!(
+            refined.contains(&truth),
+            "refined {refined} misses sample {i}"
+        );
+    }
+    // The non-smooth fallback keeps the refined enclosure identical to naive.
+    assert_eq!(naive.lower(), refined.lower());
+    assert_eq!(naive.upper(), refined.upper());
+    // At an interior dyadic point the engine certifies the exact value.
+    let arg = BigFloat::from_f64(1.25);
+    let kctx = ctx(53).with_taylor_recursions(1);
+    let (result, _) = evaluate_faithful(&it, f, &arg, &kctx, None, None);
+    let truth = eval_point(&it, f, &arg, 200);
+    assert_eq!(result.value(), &truth.round_to(53, Rounding::Nearest));
+    assert!(result.is_correctly_rounded(), "{result:?}");
+}
+
+#[test]
+fn normal_m2e2_format_conversion_composition_pipeline() {
+    // Conversions compose and are idempotent through the whole pipeline, and
+    // the printed composition matches the canonical names.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let double_x = apply(&mut it, BaseFn::Double, x);
+    let single_x = apply(&mut it, BaseFn::Single, x);
+    let single_of_double = apply(&mut it, BaseFn::Single, double_x);
+    let double_of_double = apply(&mut it, BaseFn::Double, double_x);
+    assert_eq!(print_expr(&it, single_of_double), "single(double(_x_))");
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    // single(double(1/3)) == single(1/3): double rounding through binary64
+    // into binary32 is safe for 1/3 (no double-rounding tie).
+    let a = eval_point(&it, single_of_double, &third, 165);
+    let b = eval_point(&it, single_x, &third, 165);
+    assert_eq!(a, b);
+    // Idempotence of double.
+    let c1 = eval_point(&it, double_of_double, &third, 165);
+    let c2 = eval_point(&it, double_x, &third, 165);
+    assert_eq!(c1, c2);
+    // The engine certifies the composed conversion at the binary32 width:
+    // the enclosure spans the two adjacent binary32 floats, so Test 2 returns
+    // the lower one (the documented deterministic faithful choice). `b` is
+    // already on the 24-bit grid, so the lower neighbour is `next_below`.
+    let (result, _) = evaluate_faithful(&it, single_of_double, &third, &ctx(24), None, None);
+    assert_eq!(result.value(), &b.next_below(24));
+    assert!(result.is_faithful(), "{result:?}");
 }

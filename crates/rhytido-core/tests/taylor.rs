@@ -487,3 +487,188 @@ fn robustness_inclusion_matrix_across_precision_and_k() {
         }
     }
 }
+
+// ---- M2-E2: non-smooth functions must fall back to the naive enclosure --
+
+/// A span straddling the rounding tie between two adjacent `p`-bit floats
+/// near 1/3: `[mid - 2^-(p+3), mid + 2^-(p+3)]` with `mid` the exact midpoint.
+/// Every arithmetic step is relabelled so the tie is represented exactly.
+fn format_tie_span(p: usize) -> Interval {
+    let w = p + 10;
+    let third = (BigFloat::one() / BigFloat::from_i64(3)).with_precision(w);
+    let a = third.round_to(p, rhytido_backend::Rounding::Nearest);
+    let next = a.next_above(p);
+    let mid = (a.with_precision(w) + next.with_precision(w)) / BigFloat::from_i64(2);
+    let margin = pow2(-((p + 3) as i64));
+    iv(mid.clone() - margin.clone(), mid + margin)
+}
+
+/// The nine non-smooth functions, each paired with a span that crosses one of
+/// their breakpoints (zero / an integer / a half-integer / a format tie).
+fn non_smooth_cases(it: &mut Interner) -> Vec<(NodeId, Interval)> {
+    let x = var(it);
+    let apply = |it: &mut Interner, f: BaseFn| it.intern(Expr::Apply(f, x));
+    let abs_x = apply(it, BaseFn::Abs);
+    let ceil_x = apply(it, BaseFn::Ceil);
+    let floor_x = apply(it, BaseFn::Floor);
+    let near_x = apply(it, BaseFn::NearestInt);
+    let double_x = apply(it, BaseFn::Double);
+    let single_x = apply(it, BaseFn::Single);
+    let half_x = apply(it, BaseFn::HalfPrecision);
+    let quad_x = apply(it, BaseFn::Quad);
+    let de_x = apply(it, BaseFn::DoubleExtended);
+    vec![
+        // The abs kink at zero.
+        (abs_x, iv(bf(-1.5), bf(2.5))),
+        // Integer breakpoints.
+        (ceil_x, iv(bf(1.2), bf(2.8))),
+        (floor_x, iv(bf(1.2), bf(2.8))),
+        // The half-integer tie of nearestint.
+        (near_x, iv(bf(2.4), bf(2.6))),
+        // Format rounding ties (exact midpoints of adjacent format floats).
+        (double_x, format_tie_span(53)),
+        (single_x, format_tie_span(24)),
+        (half_x, format_tie_span(11)),
+        (quad_x, format_tie_span(113)),
+        (de_x, format_tie_span(64)),
+    ]
+}
+
+#[test]
+fn normal_m2e2_non_smooth_falls_back_to_naive_bitwise() {
+    // The fallback contract is "the naive enclosure unchanged": for every
+    // non-smooth function and every recursion count, the result must match
+    // eval_interval endpoint for endpoint. A mean-value application would
+    // differ (and for the step functions it would be *wrong*: ceil's a.e.
+    // derivative is 0, so the midpoint form over [1.2, 2.8] would collapse to
+    // the point ceil(2) = 2 and drop the image value 3).
+    let mut it = Interner::new();
+    for (id, span) in non_smooth_cases(&mut it) {
+        let naive = eval_interval(&it, id, &span, 53, None);
+        for k in 0..=2u32 {
+            let taylor = eval_taylor(&it, id, &span, 53, k, None);
+            assert_same_enclosure(&naive, &taylor);
+        }
+    }
+}
+
+#[test]
+fn normal_m2e2_non_smooth_inclusion_across_breakpoints() {
+    // The dedicated inclusion property: dense samples across the integer,
+    // half-integer, zero and rounding-tie breakpoints must all lie inside the
+    // enclosure, at several precisions and recursion counts.
+    let mut it = Interner::new();
+    for (id, span) in non_smooth_cases(&mut it) {
+        for prec in [24usize, 53, 120] {
+            for k in 0..=1u32 {
+                let enc = eval_taylor(&it, id, &span, prec, k, None);
+                assert_contains_samples(&it, id, &span, &enc, 250);
+            }
+        }
+    }
+}
+
+#[test]
+fn normal_m2e2_non_smooth_buried_in_composites_still_falls_back() {
+    // The DAG walk must find a non-smooth function under smooth wrappers and
+    // arithmetic, not only at the root.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let ceil_x = it.intern(Expr::Apply(BaseFn::Ceil, x));
+    let floor_x = it.intern(Expr::Apply(BaseFn::Floor, x));
+    let double_x = it.intern(Expr::Apply(BaseFn::Double, x));
+    let sin_abs = it.intern(Expr::Apply(BaseFn::Sin, abs_x));
+    let sum = it.intern(Expr::Add(abs_x, ceil_x));
+    let diff = it.intern(Expr::Sub(double_x, floor_x));
+    let cases = [
+        (sin_abs, iv(bf(-1.5), bf(2.5))),
+        (sum, iv(bf(-1.5), bf(2.5))),
+        (diff, iv(bf(1.2), bf(2.8))),
+    ];
+    for (id, span) in cases {
+        let naive = eval_interval(&it, id, &span, 53, None);
+        let taylor = eval_taylor(&it, id, &span, 53, 1, None);
+        assert_same_enclosure(&naive, &taylor);
+        assert_contains_samples(&it, id, &span, &taylor, 250);
+    }
+}
+
+#[test]
+fn normal_m2e2_new_smooth_functions_keep_the_mean_value_refinement() {
+    // The four new smooth functions must NOT trigger the fallback: inclusion
+    // holds, and a cancelling expression still collapses (the refinement is
+    // active, not silently disabled for the whole new family).
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let log2_x = it.intern(Expr::Apply(BaseFn::Log2, x));
+    let log10_x = it.intern(Expr::Apply(BaseFn::Log10, x));
+    let log1p_x = it.intern(Expr::Apply(BaseFn::Log1p, x));
+    let expm1_x = it.intern(Expr::Apply(BaseFn::Expm1, x));
+    let cases = [
+        (log2_x, iv(bf(0.5), bf(4.0))),
+        (log10_x, iv(bf(0.5), bf(4.0))),
+        (log1p_x, iv(bf(-0.5), bf(2.0))),
+        (expm1_x, iv(bf(-1.0), bf(1.0))),
+    ];
+    for (id, span) in cases {
+        let enc = eval_taylor(&it, id, &span, 53, 0, None);
+        assert_contains_samples(&it, id, &span, &enc, 250);
+    }
+    // f = expm1(x) - expm1(x) is identically zero. No derivative of expm1 is
+    // a constant, so the mean-value form cannot collapse it to a point (that
+    // is the polynomial pathology's special shape); it must still be strictly
+    // tighter than the naive walk, which proves the refinement is active for
+    // the new smooth family rather than silently falling back.
+    let f = it.intern(Expr::Sub(expm1_x, expm1_x));
+    let span = iv(bf(0.5), bf(1.5));
+    let naive = eval_interval(&it, f, &span, 53, None);
+    let t1 = eval_taylor(&it, f, &span, 53, 1, None);
+    assert!(width(&naive) > BigFloat::zero(), "naive: {naive:?}");
+    assert!(t1.contains(&BigFloat::zero()));
+    assert!(
+        width(&t1) * BigFloat::from_i64(2) <= width(&naive),
+        "k=1 must tighten the dependency: {t1:?} vs {naive:?}"
+    );
+}
+
+#[test]
+fn extreme_m2e2_non_smooth_degenerate_inputs_stay_naive() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let ceil_x = it.intern(Expr::Apply(BaseFn::Ceil, x));
+    let double_x = it.intern(Expr::Apply(BaseFn::Double, x));
+    let spans = [
+        Interval::point(bf(2.5)),
+        Interval::NAN,
+        Interval::empty(),
+        iv(BigFloat::neg_infinity(), BigFloat::one()),
+        iv(BigFloat::one(), BigFloat::infinity()),
+    ];
+    for id in [ceil_x, double_x] {
+        for span in &spans {
+            let naive = eval_interval(&it, id, span, 53, None);
+            let taylor = eval_taylor(&it, id, span, 53, 2, None);
+            assert_same_enclosure(&naive, &taylor);
+        }
+    }
+}
+
+#[test]
+fn robustness_m2e2_non_smooth_shared_dag_is_pure_and_deterministic() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let f = it.intern(Expr::Add(abs_x, abs_x));
+    let span = iv(bf(-1.5), bf(2.5));
+    let before = it.len();
+    let first = eval_taylor(&it, f, &span, 53, 1, None);
+    let second = eval_taylor(&it, f, &span, 53, 1, None);
+    assert_same_enclosure(&first, &second);
+    assert_eq!(
+        it.len(),
+        before,
+        "the fallback must not mutate the interner"
+    );
+    assert_contains_samples(&it, f, &span, &first, 250);
+}

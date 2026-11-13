@@ -203,6 +203,19 @@ fn extreme_all_function_names_are_distinct() {
         (BaseFn::Atanh, "atanh"),
         (BaseFn::Erf, "erf"),
         (BaseFn::Erfc, "erfc"),
+        (BaseFn::Log2, "log2"),
+        (BaseFn::Log10, "log10"),
+        (BaseFn::Log1p, "log1p"),
+        (BaseFn::Expm1, "expm1"),
+        (BaseFn::Abs, "abs"),
+        (BaseFn::Ceil, "ceil"),
+        (BaseFn::Floor, "floor"),
+        (BaseFn::NearestInt, "nearestint"),
+        (BaseFn::Double, "double"),
+        (BaseFn::Single, "single"),
+        (BaseFn::HalfPrecision, "halfprecision"),
+        (BaseFn::Quad, "quad"),
+        (BaseFn::DoubleExtended, "doubleextended"),
     ];
     let mut printed = Vec::new();
     for (f, name) in fns {
@@ -214,6 +227,83 @@ fn extreme_all_function_names_are_distinct() {
     for (i, a) in printed.iter().enumerate() {
         for b in printed.iter().skip(i + 1) {
             assert_ne!(a, b, "two functions share a rendering");
+        }
+    }
+}
+
+// ---- M2-E2 additions: the thirteen new function names -------------------
+
+#[test]
+fn normal_m2e2_new_function_names() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let cases = [
+        (BaseFn::Log2, "log2(_x_)"),
+        (BaseFn::Log10, "log10(_x_)"),
+        (BaseFn::Log1p, "log1p(_x_)"),
+        (BaseFn::Expm1, "expm1(_x_)"),
+        (BaseFn::Abs, "abs(_x_)"),
+        (BaseFn::Ceil, "ceil(_x_)"),
+        (BaseFn::Floor, "floor(_x_)"),
+        (BaseFn::NearestInt, "nearestint(_x_)"),
+        (BaseFn::Double, "double(_x_)"),
+        (BaseFn::Single, "single(_x_)"),
+        (BaseFn::HalfPrecision, "halfprecision(_x_)"),
+        (BaseFn::Quad, "quad(_x_)"),
+        (BaseFn::DoubleExtended, "doubleextended(_x_)"),
+    ];
+    for (f, expected) in cases {
+        let node = it.intern(Expr::Apply(f, x));
+        assert_eq!(print_expr(&it, node), expected);
+    }
+}
+
+#[test]
+fn normal_m2e2_new_names_compose_with_operators() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let one = c(&mut it, 1);
+    // Nesting: double(log2(x)).
+    let log2_x = it.intern(Expr::Apply(BaseFn::Log2, x));
+    let nested = it.intern(Expr::Apply(BaseFn::Double, log2_x));
+    assert_eq!(print_expr(&it, nested), "double(log2(_x_))");
+    // Operators around an application keep the atom precedence.
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let shifted = it.intern(Expr::Add(abs_x, one));
+    assert_eq!(print_expr(&it, shifted), "abs(_x_) + 1");
+    let negated = it.intern(Expr::Neg(abs_x));
+    assert_eq!(print_expr(&it, negated), "-abs(_x_)");
+    let powered = it.intern(Expr::Pow(abs_x, one));
+    assert_eq!(print_expr(&it, powered), "abs(_x_)^1");
+    // The natural logarithm keeps its canonical name (the "log" alias is M3).
+    let ln_x = it.intern(Expr::Apply(BaseFn::Ln, x));
+    assert_eq!(print_expr(&it, ln_x), "ln(_x_)");
+}
+
+#[test]
+fn robustness_m2e2_new_names_print_on_special_arguments() {
+    let mut it = Interner::new();
+    let nan = it.intern(Expr::Constant(BigFloat::NAN));
+    let inf = it.intern(Expr::Constant(BigFloat::infinity()));
+    for f in [
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ] {
+        for a in [nan, inf] {
+            let node = it.intern(Expr::Apply(f, a));
+            let text = print_expr(&it, node);
+            assert!(text.contains('(') && text.ends_with(')'), "{f:?}: {text}");
         }
     }
 }

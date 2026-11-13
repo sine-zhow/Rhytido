@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use rhytido_backend::BigFloat;
+use rhytido_backend::{BigFloat, Format, Rounding};
 
 use crate::expr::{BaseFn, Expr, Interner, NodeId};
 
@@ -91,5 +91,20 @@ fn apply_fn(f: BaseFn, v: &BigFloat) -> BigFloat {
         BaseFn::Atanh => v.atanh(),
         BaseFn::Erf => v.erf(),
         BaseFn::Erfc => v.erfc(),
+        BaseFn::Log2 => v.log2(),
+        BaseFn::Log10 => v.log10(),
+        BaseFn::Log1p => v.log1p(),
+        BaseFn::Expm1 => v.expm1(),
+        BaseFn::Abs => v.abs(),
+        BaseFn::Ceil => v.ceil(),
+        BaseFn::Floor => v.floor(),
+        BaseFn::NearestInt => v.nearestint(),
+        // Format conversions are exact rounding operations: nearest rounding
+        // to the format's significand width, with no extra rounding here.
+        BaseFn::Double => v.round_to_format(Format::Double, Rounding::Nearest),
+        BaseFn::Single => v.round_to_format(Format::Single, Rounding::Nearest),
+        BaseFn::HalfPrecision => v.round_to_format(Format::Half, Rounding::Nearest),
+        BaseFn::Quad => v.round_to_format(Format::Quad, Rounding::Nearest),
+        BaseFn::DoubleExtended => v.round_to_format(Format::DoubleExtended, Rounding::Nearest),
     }
 }

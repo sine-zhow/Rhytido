@@ -40,7 +40,7 @@ fn apply(it: &mut Interner, f: BaseFn, a: NodeId) -> NodeId {
 /// Every base function, listed explicitly. `fn_name` below is the exhaustive
 /// `match` that fails to compile if the enum grows, so a new variant cannot be
 /// skipped silently.
-fn all_base_fns() -> [BaseFn; 17] {
+fn all_base_fns() -> [BaseFn; 30] {
     [
         BaseFn::Sqrt,
         BaseFn::Exp,
@@ -59,6 +59,19 @@ fn all_base_fns() -> [BaseFn; 17] {
         BaseFn::Atanh,
         BaseFn::Erf,
         BaseFn::Erfc,
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
     ]
 }
 
@@ -81,6 +94,19 @@ fn fn_name(f: BaseFn) -> &'static str {
         BaseFn::Atanh => "atanh",
         BaseFn::Erf => "erf",
         BaseFn::Erfc => "erfc",
+        BaseFn::Log2 => "log2",
+        BaseFn::Log10 => "log10",
+        BaseFn::Log1p => "log1p",
+        BaseFn::Expm1 => "expm1",
+        BaseFn::Abs => "abs",
+        BaseFn::Ceil => "ceil",
+        BaseFn::Floor => "floor",
+        BaseFn::NearestInt => "nearestint",
+        BaseFn::Double => "double",
+        BaseFn::Single => "single",
+        BaseFn::HalfPrecision => "halfprecision",
+        BaseFn::Quad => "quad",
+        BaseFn::DoubleExtended => "doubleextended",
     }
 }
 
@@ -90,15 +116,26 @@ fn sample_arg(f: BaseFn) -> BigFloat {
     match f {
         BaseFn::Sqrt | BaseFn::Ln | BaseFn::Acosh => BigFloat::from_i64(2),
         BaseFn::Asin | BaseFn::Acos | BaseFn::Atanh => BigFloat::from_f64(0.5),
+        BaseFn::Log2 | BaseFn::Log10 => BigFloat::from_i64(3),
+        BaseFn::Log1p => BigFloat::from_f64(0.5),
+        BaseFn::Ceil | BaseFn::Floor | BaseFn::NearestInt => BigFloat::from_f64(1.5),
+        BaseFn::Double
+        | BaseFn::Single
+        | BaseFn::HalfPrecision
+        | BaseFn::Quad
+        | BaseFn::DoubleExtended => BigFloat::one() / BigFloat::from_i64(3),
         _ => BigFloat::one(),
     }
 }
 
-/// Enclosure width; only for bounded ranges.
+/// Enclosure width; only for bounded ranges. The subtraction is relabelled
+/// two bits above the operands so the sum's carry bit cannot round the width
+/// itself (a rounded width can invert a genuine monotonicity comparison).
 fn width(enc: &Interval) -> BigFloat {
     let hi = enc.upper().expect("bounded enclosure");
     let lo = enc.lower().expect("bounded enclosure");
-    hi - lo
+    let p = hi.precision().max(lo.precision()).saturating_add(2);
+    hi.with_precision(p) - lo.with_precision(p)
 }
 
 fn endpoints_eq(enc: &Interval, lo: &BigFloat, hi: &BigFloat) -> bool {
@@ -730,4 +767,242 @@ fn robustness_positive_base_power_stays_enclosed_and_tightens() {
     }
     let enc = last.expect("at least one precision");
     assert!(enc.lower().expect("bounded") > BigFloat::from_f64(1.58));
+}
+
+// ---- M2-E2 additions: the thirteen new functions ------------------------
+
+#[test]
+fn normal_m2e2_new_smooth_functions_contain_their_images() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let cases = [
+        (BaseFn::Log2, BigFloat::from_f64(0.5), BigFloat::from_i64(4)),
+        (
+            BaseFn::Log10,
+            BigFloat::from_f64(0.5),
+            BigFloat::from_i64(4),
+        ),
+        (
+            BaseFn::Log1p,
+            BigFloat::from_f64(-0.5),
+            BigFloat::from_i64(2),
+        ),
+        (
+            BaseFn::Expm1,
+            BigFloat::from_f64(-1.0),
+            BigFloat::from_i64(1),
+        ),
+    ];
+    for (f, lo, hi) in cases {
+        let id = apply(&mut it, f, x);
+        let span = Interval::new(lo.clone(), hi.clone());
+        let mid = (lo.clone() + hi.clone()) / BigFloat::from_i64(2);
+        let mut previous = None::<BigFloat>;
+        for prec in SAMPLE_PRECS {
+            let enc = eval_interval(&it, id, &span, prec, None);
+            for probe in [&lo, &hi, &mid] {
+                let want = reference(&it, id, probe);
+                assert!(
+                    enc.contains(&want),
+                    "{} over [{lo}, {hi}] at {prec}: {enc} misses {want}",
+                    fn_name(f)
+                );
+            }
+            let w = width(&enc);
+            if let Some(p) = &previous {
+                assert!(w <= *p, "{}: width grew at {prec}", fn_name(f));
+            }
+            previous = Some(w);
+        }
+    }
+}
+
+#[test]
+fn normal_m2e2_abs_interval_has_its_minimum_at_zero() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let abs_x = apply(&mut it, BaseFn::Abs, x);
+    // A zero-spanning interval: the image is [0, max(|lo|, |hi|)].
+    let span = Interval::new(BigFloat::from_i64(-2), BigFloat::from_i64(3));
+    let enc = eval_interval(&it, abs_x, &span, 53, None);
+    assert!(enc.contains(&BigFloat::zero()), "{enc}");
+    assert!(enc.contains(&BigFloat::from_i64(3)), "{enc}");
+    assert!(enc.contains(&BigFloat::from_i64(2)), "{enc}");
+    assert!(enc.lower().expect("bounded") >= BigFloat::zero());
+    // One-sided intervals map monotonically.
+    let neg = Interval::new(BigFloat::from_i64(-5), BigFloat::from_i64(-2));
+    let enc = eval_interval(&it, abs_x, &neg, 53, None);
+    assert!(enc.contains(&BigFloat::from_i64(2)) && enc.contains(&BigFloat::from_i64(5)));
+    assert!(enc.lower().expect("bounded") >= BigFloat::from_i64(2));
+}
+
+#[test]
+fn normal_m2e2_integer_rounding_images_cross_breakpoints() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let ceil_x = apply(&mut it, BaseFn::Ceil, x);
+    let floor_x = apply(&mut it, BaseFn::Floor, x);
+    let near_x = apply(&mut it, BaseFn::NearestInt, x);
+    let span = Interval::new(BigFloat::from_f64(1.2), BigFloat::from_f64(2.8));
+    // ceil [1.2, 2.8] = [2, 3]; floor = [1, 2]; nearestint = [1, 3].
+    let enc = eval_interval(&it, ceil_x, &span, 53, None);
+    assert!(enc.contains(&BigFloat::from_i64(2)) && enc.contains(&BigFloat::from_i64(3)));
+    assert_eq!(enc.lower().expect("bounded"), BigFloat::from_i64(2));
+    assert_eq!(enc.upper().expect("bounded"), BigFloat::from_i64(3));
+    let enc = eval_interval(&it, floor_x, &span, 53, None);
+    assert_eq!(enc.lower().expect("bounded"), BigFloat::from_i64(1));
+    assert_eq!(enc.upper().expect("bounded"), BigFloat::from_i64(2));
+    let enc = eval_interval(&it, near_x, &span, 53, None);
+    assert_eq!(enc.lower().expect("bounded"), BigFloat::from_i64(1));
+    assert_eq!(enc.upper().expect("bounded"), BigFloat::from_i64(3));
+    // Crossing zero: ceil [-0.5, 0.5] = [0, 1], floor = [-1, 0].
+    let zero_span = Interval::new(BigFloat::from_f64(-0.5), BigFloat::from_f64(0.5));
+    let enc = eval_interval(&it, ceil_x, &zero_span, 53, None);
+    assert!(enc.contains(&BigFloat::zero()) && enc.contains(&BigFloat::one()));
+    let enc = eval_interval(&it, floor_x, &zero_span, 53, None);
+    assert!(enc.contains(&-BigFloat::one()) && enc.contains(&BigFloat::zero()));
+    // Crossing the half-integer tie: nearestint [2.4, 2.6] = [2, 3].
+    let tie_span = Interval::new(BigFloat::from_f64(2.4), BigFloat::from_f64(2.6));
+    let enc = eval_interval(&it, near_x, &tie_span, 53, None);
+    assert_eq!(enc.lower().expect("bounded"), BigFloat::from_i64(2));
+    assert_eq!(enc.upper().expect("bounded"), BigFloat::from_i64(3));
+    // A point at the tie itself rounds to even: nearestint(2.5) = 2.
+    let tie_point = Interval::point(BigFloat::from_f64(2.5));
+    let enc = eval_interval(&it, near_x, &tie_point, 53, None);
+    assert!(enc.is_point());
+    assert_eq!(enc.lower().expect("point"), BigFloat::from_i64(2));
+}
+
+#[test]
+fn normal_m2e2_format_intervals_use_directed_endpoint_rounding() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let formats = [
+        (BaseFn::Double, rhytido_backend::Format::Double),
+        (BaseFn::Single, rhytido_backend::Format::Single),
+        (BaseFn::HalfPrecision, rhytido_backend::Format::Half),
+        (BaseFn::Quad, rhytido_backend::Format::Quad),
+        (
+            BaseFn::DoubleExtended,
+            rhytido_backend::Format::DoubleExtended,
+        ),
+    ];
+    let lo = BigFloat::from_f64(0.3);
+    let hi = BigFloat::from_f64(0.4);
+    let span = Interval::new(lo.clone(), hi.clone());
+    for (f, format) in formats {
+        let id = apply(&mut it, f, x);
+        let enc = eval_interval(&it, id, &span, 165, None);
+        // Directed endpoint images: lower rounded down, upper rounded up.
+        let want_lo = lo.round_to_format(format, Rounding::Down);
+        let want_hi = hi.round_to_format(format, Rounding::Up);
+        assert!(
+            enc.contains(&want_lo),
+            "{}: {enc} misses {want_lo}",
+            fn_name(f)
+        );
+        assert!(
+            enc.contains(&want_hi),
+            "{}: {enc} misses {want_hi}",
+            fn_name(f)
+        );
+        // Every interior point's nearest image is contained too.
+        for probe in [0.32, 0.35, 0.37, 0.39] {
+            let p = BigFloat::from_f64(probe);
+            let image = p.round_to_format(format, Rounding::Nearest);
+            assert!(enc.contains(&image), "{}: {enc} misses {image}", fn_name(f));
+        }
+    }
+}
+
+#[test]
+fn normal_m2e2_format_intervals_cross_rounding_boundaries() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let double_x = apply(&mut it, BaseFn::Double, x);
+    let single_x = apply(&mut it, BaseFn::Single, x);
+    // binary64 tie: 2^53+1 sits exactly between 2^53 and 2^53+2; the image of
+    // the spanning interval must contain both neighbours (and the tie's
+    // ties-to-even image 2^53).
+    let lo = BigFloat::from_i64(9007199254740992_i64);
+    let hi = BigFloat::from_i64(9007199254740994_i64);
+    let span = Interval::new(lo.clone(), hi.clone());
+    let enc = eval_interval(&it, double_x, &span, 165, None);
+    assert!(enc.contains(&lo), "{enc}");
+    assert!(enc.contains(&hi), "{enc}");
+    assert!(
+        enc.contains(
+            &BigFloat::from_i64(9007199254740993_i64)
+                .round_to_format(rhytido_backend::Format::Double, Rounding::Nearest)
+        )
+    );
+    // binary32 tie: 2^24+1 between 2^24 and 2^24+2.
+    let lo = BigFloat::from_i64(16777216);
+    let hi = BigFloat::from_i64(16777218);
+    let span = Interval::new(lo.clone(), hi.clone());
+    let enc = eval_interval(&it, single_x, &span, 165, None);
+    assert!(enc.contains(&lo) && enc.contains(&hi), "{enc}");
+    // A point input converts exactly (nearest), at every working precision.
+    let third = BigFloat::one() / BigFloat::from_i64(3);
+    for prec in SAMPLE_PRECS {
+        let enc = eval_interval(&it, double_x, &point(&third), prec, None);
+        assert!(
+            enc.contains(
+                &third.round_to_format(rhytido_backend::Format::Double, Rounding::Nearest)
+            ),
+            "double(1/3) at {prec}: {enc}"
+        );
+    }
+}
+
+#[test]
+fn error_m2e2_new_logarithm_domains_are_conservative() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    let log2_x = apply(&mut it, BaseFn::Log2, x);
+    let log10_x = apply(&mut it, BaseFn::Log10, x);
+    let log1p_x = apply(&mut it, BaseFn::Log1p, x);
+    // A domain-crossing interval is conservatively NaN (backend map_mono).
+    let crossing = Interval::new(BigFloat::from_i64(-1), BigFloat::from_i64(2));
+    assert!(eval_interval(&it, log2_x, &crossing, 53, None).is_nan());
+    assert!(eval_interval(&it, log10_x, &crossing, 53, None).is_nan());
+    let below = Interval::new(BigFloat::from_i64(-2), BigFloat::from_f64(-0.5));
+    assert!(eval_interval(&it, log1p_x, &below, 53, None).is_nan());
+    // The pole itself: log2(0) / log10(0) / log1p(-1) are unbounded below.
+    for (id, arg) in [
+        (log2_x, BigFloat::zero()),
+        (log10_x, BigFloat::zero()),
+        (log1p_x, -BigFloat::one()),
+    ] {
+        let enc = eval_interval(&it, id, &point(&arg), 53, None);
+        assert!(!enc.is_nan(), "{enc} should be unbounded, not NaN");
+        assert!(!enc.lower().expect("range").is_finite(), "{enc}");
+    }
+}
+
+#[test]
+fn robustness_m2e2_format_special_intervals_propagate() {
+    let mut it = Interner::new();
+    let x = it.intern(Expr::Variable);
+    for f in [
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+    ] {
+        let id = apply(&mut it, f, x);
+        assert!(eval_interval(&it, id, &Interval::NAN, 53, None).is_nan());
+        assert!(eval_interval(&it, id, &Interval::empty(), 53, None).is_empty());
+    }
+    // Unbounded endpoints pass through the format conversions untouched.
+    let double_x = apply(&mut it, BaseFn::Double, x);
+    let whole = Interval::new(BigFloat::neg_infinity(), BigFloat::infinity());
+    let enc = eval_interval(&it, double_x, &whole, 53, None);
+    assert!(!enc.lower().expect("range").is_finite());
+    assert!(!enc.upper().expect("range").is_finite());
 }

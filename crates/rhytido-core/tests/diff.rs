@@ -8,8 +8,8 @@
 use rhytido_backend::BigFloat;
 use rhytido_core::{BaseFn, Expr, Interner, NodeId, differentiate, eval_point};
 
-/// All seventeen base functions, mirroring the exhaustive derivative table.
-const ALL_FNS: [BaseFn; 17] = [
+/// All thirty base functions, mirroring the exhaustive derivative table.
+const ALL_FNS: [BaseFn; 30] = [
     BaseFn::Sqrt,
     BaseFn::Exp,
     BaseFn::Ln,
@@ -27,6 +27,19 @@ const ALL_FNS: [BaseFn; 17] = [
     BaseFn::Atanh,
     BaseFn::Erf,
     BaseFn::Erfc,
+    BaseFn::Log2,
+    BaseFn::Log10,
+    BaseFn::Log1p,
+    BaseFn::Expm1,
+    BaseFn::Abs,
+    BaseFn::Ceil,
+    BaseFn::Floor,
+    BaseFn::NearestInt,
+    BaseFn::Double,
+    BaseFn::Single,
+    BaseFn::HalfPrecision,
+    BaseFn::Quad,
+    BaseFn::DoubleExtended,
 ];
 
 fn bf(v: f64) -> BigFloat {
@@ -71,13 +84,25 @@ fn close_enough(a: &BigFloat, b: &BigFloat, bits: u32) -> bool {
 
 /// Sample points per function, chosen to stay inside the domain and away from
 /// singularities (no `0` for `sqrt`/`ln`, no `±1` for `asin`/`acos`/`atanh`, no
-/// `1` for `acosh`, no `±pi/2` for `tan`).
+/// `1` for `acosh`, no `±pi/2` for `tan`) and away from the breakpoints of the
+/// non-smooth functions (no integers for `ceil`/`floor`, no half- integers for
+/// `nearestint`, no zero for `abs`; the format samples are exact dyadics, far
+/// from any rounding boundary of any format).
 fn sample_points(f: BaseFn) -> Vec<BigFloat> {
     let pts: &[f64] = match f {
-        BaseFn::Sqrt | BaseFn::Ln => &[0.5, 1.0, 2.0, 3.0, 10.0],
+        BaseFn::Sqrt | BaseFn::Ln | BaseFn::Log2 | BaseFn::Log10 => &[0.5, 1.0, 2.0, 3.0, 10.0],
         BaseFn::Asin | BaseFn::Acos | BaseFn::Atanh => &[-0.9, -0.5, 0.0, 0.5, 0.9],
         BaseFn::Acosh => &[1.5, 2.0, 3.0, 5.0, 10.0],
         BaseFn::Tan => &[-1.0, -0.5, 0.0, 0.5, 1.0],
+        BaseFn::Log1p => &[-0.9, -0.5, 0.0, 0.5, 1.0, 2.0],
+        BaseFn::Abs => &[-2.0, -0.5, 0.5, 1.0, 2.0],
+        BaseFn::Ceil | BaseFn::Floor => &[-1.5, -0.5, 0.25, 0.5, 1.5, 2.75],
+        BaseFn::NearestInt
+        | BaseFn::Double
+        | BaseFn::Single
+        | BaseFn::HalfPrecision
+        | BaseFn::Quad
+        | BaseFn::DoubleExtended => &[-1.25, -0.75, 0.25, 0.75, 1.25, 2.75],
         _ => &[-2.0, -0.5, 0.0, 0.5, 1.0, 2.0],
     };
     pts.iter().map(|&v| bf(v)).collect()
@@ -160,6 +185,41 @@ fn closed_form(it: &mut Interner, f: BaseFn, x: NodeId) -> NodeId {
             let d = it.intern(Expr::Div(num, spi));
             it.intern(Expr::Neg(d))
         }
+        BaseFn::Log2 => {
+            // Independent form: log2(e) / x (the table uses 1 / (x * ln 2)).
+            let e = it.intern(Expr::Apply(BaseFn::Exp, one));
+            let log2e = it.intern(Expr::Apply(BaseFn::Log2, e));
+            it.intern(Expr::Div(log2e, x))
+        }
+        BaseFn::Log10 => {
+            // Independent form: log10(e) / x.
+            let e = it.intern(Expr::Apply(BaseFn::Exp, one));
+            let log10e = it.intern(Expr::Apply(BaseFn::Log10, e));
+            it.intern(Expr::Div(log10e, x))
+        }
+        BaseFn::Log1p => {
+            // Independent form: (1 + x)^-1 (the table uses 1 / (1 + x)).
+            let d = it.intern(Expr::Add(one, x));
+            it.intern(Expr::Pow(d, neg_one))
+        }
+        BaseFn::Expm1 => it.intern(Expr::Apply(BaseFn::Exp, x)),
+        BaseFn::Abs => {
+            // Independent sign form: x / sqrt(x^2) (the table uses x / |x|).
+            let root = it.intern(Expr::Apply(BaseFn::Sqrt, x2));
+            it.intern(Expr::Div(x, root))
+        }
+        BaseFn::Ceil
+        | BaseFn::Floor
+        | BaseFn::NearestInt
+        | BaseFn::Double
+        | BaseFn::Single
+        | BaseFn::HalfPrecision
+        | BaseFn::Quad
+        | BaseFn::DoubleExtended => {
+            // Conservative a.e. derivative of a step function: 0 between the
+            // breakpoints (the sample points stay away from them).
+            c(it, 0)
+        }
     }
 }
 
@@ -176,10 +236,10 @@ fn central_diff(it: &Interner, f: NodeId, x: &BigFloat, h: &BigFloat, prec: usiz
     ((fp - fm) / two_h).with_precision(prec)
 }
 
-// ---- Normal: known-derivative identities (all 17) ---------------------
+// ---- Normal: known-derivative identities (all 30) ---------------------
 
 #[test]
-fn normal_known_derivative_identities_all_seventeen() {
+fn normal_known_derivative_identities_all_thirty() {
     // Both the symbolic derivative and the independent closed form are evaluated
     // at 250 bits; they are mathematically identical, so they agree to within a
     // few ulps of 250 (~2^-245). A 2^-180 relative tolerance leaves ~65 bits of
@@ -202,10 +262,10 @@ fn normal_known_derivative_identities_all_seventeen() {
     }
 }
 
-// ---- Normal: independent central-difference cross-check (all 17) ------
+// ---- Normal: independent central-difference cross-check (all 30) ------
 
 #[test]
-fn normal_central_difference_cross_check_all_seventeen() {
+fn normal_central_difference_cross_check_all_thirty() {
     // Tolerance derivation (working precision / h / truncation vs rounding):
     // * Working precision p = 250 bits, so each f evaluation carries an absolute
     //   rounding error of at most a few ulps, ~ |f| * 2^-245.
@@ -221,8 +281,19 @@ fn normal_central_difference_cross_check_all_seventeen() {
     let mut it = Interner::new();
     let x = var(&mut it);
     let prec = 250;
-    let h = pow2(-60);
     for f in ALL_FNS {
+        // The step must stay below half a grid step of the function's own
+        // staircase: for the format conversions the grid is the format ulp,
+        // so quad (2^-114 near the samples) and doubleextended (2^-65) need a
+        // much smaller h than the smooth functions, or the quotient measures
+        // the staircase's average slope (~1) instead of the a.e. derivative.
+        // The samples are exact dyadics, so x ± h rounds back to x and the
+        // quotient is exactly 0, matching the conservative rule.
+        let h = match f {
+            BaseFn::Quad => pow2(-130),
+            BaseFn::DoubleExtended => pow2(-80),
+            _ => pow2(-60),
+        };
         let func = it.intern(Expr::Apply(f, x));
         let deriv = differentiate(&mut it, func);
         for xv in sample_points(f) {
@@ -493,4 +564,110 @@ fn robustness_large_shared_dag_terminates() {
     let got = eval_point(&it, d, &bf(1.0), 200);
     let want = BigFloat::from_i64(100) * bf(1.0).with_precision(200).cos();
     assert!(close_enough(&got, &want, 180), "100*sin' : {got} vs {want}");
+}
+
+// ---- M2-E2 additions: the new functions' derivative rules ---------------
+
+#[test]
+fn normal_m2e2_smooth_derivative_known_values() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let prec = 250;
+    // log2'(8) = 1/(8 ln 2), log10'(1000) = 1/(1000 ln 10).
+    let log2_x = it.intern(Expr::Apply(BaseFn::Log2, x));
+    let d = differentiate(&mut it, log2_x);
+    let want =
+        BigFloat::one() / (BigFloat::from_i64(8) * BigFloat::from_i64(2).with_precision(prec).ln());
+    let got = eval_point(&it, d, &BigFloat::from_i64(8), prec);
+    assert!(close_enough(&got, &want, 200), "log2'(8): {got} vs {want}");
+    let log10_x = it.intern(Expr::Apply(BaseFn::Log10, x));
+    let d = differentiate(&mut it, log10_x);
+    let want = BigFloat::one()
+        / (BigFloat::from_i64(1000) * BigFloat::from_i64(10).with_precision(prec).ln());
+    let got = eval_point(&it, d, &BigFloat::from_i64(1000), prec);
+    assert!(
+        close_enough(&got, &want, 200),
+        "log10'(1000): {got} vs {want}"
+    );
+    // log1p'(0) = 1 and expm1'(0) = 1.
+    for f in [BaseFn::Log1p, BaseFn::Expm1] {
+        let func = it.intern(Expr::Apply(f, x));
+        let d = differentiate(&mut it, func);
+        let got = eval_point(&it, d, &BigFloat::zero(), prec);
+        assert!(
+            close_enough(&got, &BigFloat::one(), 200),
+            "{f:?}'(0): {got}"
+        );
+    }
+    // expm1'(1) = e.
+    let func = it.intern(Expr::Apply(BaseFn::Expm1, x));
+    let d = differentiate(&mut it, func);
+    let got = eval_point(&it, d, &BigFloat::one(), prec);
+    let want = BigFloat::one().with_precision(prec).exp();
+    assert!(close_enough(&got, &want, 200), "expm1'(1): {got} vs {want}");
+}
+
+#[test]
+fn normal_m2e2_non_smooth_derivatives_are_conservative() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    // Step functions: the a.e. derivative is 0 between breakpoints.
+    for f in [
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ] {
+        let func = it.intern(Expr::Apply(f, x));
+        let d = differentiate(&mut it, func);
+        for xv in [bf(0.25), bf(1.5), bf(-2.75)] {
+            let got = eval_point(&it, d, &xv, 100);
+            assert!(got.is_zero(), "{f:?}'({xv}) should be 0 a.e., got {got}");
+        }
+    }
+    // abs: sign away from the kink.
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let d = differentiate(&mut it, abs_x);
+    assert_eq!(eval_point(&it, d, &bf(2.0), 100), BigFloat::one());
+    assert_eq!(eval_point(&it, d, &bf(-2.0), 100), -BigFloat::one());
+}
+
+#[test]
+fn error_m2e2_abs_derivative_is_undefined_at_the_kink() {
+    // sign(0) = 0/|0| is NaN under evaluation: the rule deliberately does not
+    // invent a value at the non-differentiable point.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let abs_x = it.intern(Expr::Apply(BaseFn::Abs, x));
+    let d = differentiate(&mut it, abs_x);
+    assert!(eval_point(&it, d, &BigFloat::zero(), 100).is_nan());
+}
+
+#[test]
+fn robustness_m2e2_chain_rule_through_new_functions() {
+    // d/dx double(sin x) = 0 * cos x = 0 a.e. (the conversion is a step
+    // function of its argument); d/dx expm1(x^2) = exp(x^2) * 2x.
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let two = c(&mut it, 2);
+    let sin_x = it.intern(Expr::Apply(BaseFn::Sin, x));
+    let f = it.intern(Expr::Apply(BaseFn::Double, sin_x));
+    let d = differentiate(&mut it, f);
+    let got = eval_point(&it, d, &bf(0.5), 100);
+    assert!(got.is_zero(), "double(sin x)' should be 0 a.e., got {got}");
+    let x2 = it.intern(Expr::Pow(x, two));
+    let g = it.intern(Expr::Apply(BaseFn::Expm1, x2));
+    let dg = differentiate(&mut it, g);
+    let e_x2 = it.intern(Expr::Apply(BaseFn::Exp, x2));
+    let two_x = it.intern(Expr::Mul(two, x));
+    let expect = it.intern(Expr::Mul(e_x2, two_x));
+    for xv in [bf(0.5), bf(1.0), bf(-1.0)] {
+        let got = eval_point(&it, dg, &xv, 250);
+        let want = eval_point(&it, expect, &xv, 250);
+        assert!(close_enough(&got, &want, 180), "expm1(x^2)' at {xv}");
+    }
 }

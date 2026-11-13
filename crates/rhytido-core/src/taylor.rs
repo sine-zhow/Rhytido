@@ -57,11 +57,26 @@
 //! is identically zero. The refinement never loses a valid enclosure: the
 //! naive enclosure of the same expression is returned instead, so the result
 //! always contains the true range (up to the documented guard residual).
+//!
+//! # Non-smooth functions
+//!
+//! The mean-value theorem requires differentiability on the whole interval.
+//! `abs` has a kink at zero, and `ceil`/`floor`/`nearestint` and the format
+//! conversions (`double`/`single`/`halfprecision`/`quad`/`doubleextended`) are
+//! step functions: a slope enclosure cannot bound their jumps, and a midpoint
+//! form across a breakpoint can exclude the true image. Whenever the
+//! expression contains a non-smooth function ([`BaseFn::is_smooth`]), the
+//! refiner therefore returns the naive [`eval_interval`] enclosure unchanged.
+//! Derivatives of smooth expressions are themselves smooth (the derivative
+//! table only builds smooth functions), so the check at the top level covers
+//! every recursion into the derivative as well.
+
+use std::collections::HashSet;
 
 use rhytido_backend::{BigFloat, Interval, Rounding};
 
 use crate::diff::differentiate;
-use crate::expr::{Interner, NodeId};
+use crate::expr::{Expr, Interner, NodeId};
 use crate::interval_eval::{IntervalFnHook, eval_interval};
 
 /// Guard bits added to the requested precision, matching the precision model of
@@ -79,10 +94,11 @@ const GUARD_BITS: usize = 32;
 /// range of the expression over `x_i` (up to the documented guard residual).
 ///
 /// For NaN/empty, point, or unbounded `x_i` the naive [`eval_interval`] enclosure
-/// is returned unchanged; the same fallback applies when the mean-value
-/// computation cannot produce a bounded real enclosure (an unsimplified
-/// derivative with a removable singularity), so the inclusion contract is
-/// unconditional (see the module documentation).
+/// is returned unchanged; the same fallback applies when the expression
+/// contains a non-smooth function (see the module documentation's "Non-smooth
+/// functions") and when the mean-value computation cannot produce a bounded
+/// real enclosure (an unsimplified derivative with a removable singularity),
+/// so the inclusion contract is unconditional.
 ///
 /// # Panics
 ///
@@ -120,6 +136,13 @@ pub fn eval_taylor(
         _ => return eval_interval(it, id, x_i, prec, hook),
     };
     if x_i.is_point() || !lo.is_finite() || !hi.is_finite() {
+        return eval_interval(it, id, x_i, prec, hook);
+    }
+    // Non-smooth functions (the abs kink, integer rounding and format
+    // conversion steps) violate the differentiability premise of the
+    // mean-value theorem: a slope enclosure cannot bound the jumps, so the
+    // naive enclosure is the only unconditional one (module documentation).
+    if contains_non_smooth(it, id) {
         return eval_interval(it, id, x_i, prec, hook);
     }
     // Differentiation interns new nodes, so work on a clone: the caller's
@@ -210,5 +233,30 @@ fn round_outward(iv: &Interval, prec: usize) -> Interval {
             hi.round_to(prec, Rounding::Up),
         ),
         _ => iv.clone(),
+    }
+}
+
+/// Whether `id` contains a non-smooth base function anywhere in its DAG.
+///
+/// Memoized over the interned nodes so a shared subtree is visited once. A
+/// revisited node answered `false` on its first complete visit (a `true`
+/// would have short-circuited the whole walk), so skipping it is sound.
+fn contains_non_smooth(it: &Interner, id: NodeId) -> bool {
+    let mut seen = HashSet::new();
+    contains_non_smooth_rec(it, id, &mut seen)
+}
+
+/// Recursive worker of [`contains_non_smooth`].
+fn contains_non_smooth_rec(it: &Interner, id: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    match it.get(id) {
+        Expr::Apply(f, a) => !f.is_smooth() || contains_non_smooth_rec(it, *a, seen),
+        Expr::Constant(_) | Expr::Pi | Expr::Variable => false,
+        Expr::Neg(a) => contains_non_smooth_rec(it, *a, seen),
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) | Expr::Pow(a, b) => {
+            contains_non_smooth_rec(it, *a, seen) || contains_non_smooth_rec(it, *b, seen)
+        }
     }
 }

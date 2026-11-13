@@ -1081,3 +1081,231 @@ fn robustness_taylor_integration_is_deterministic() {
     assert_eq!(a.1, b.1);
     assert_eq!(a.0.quality(), Quality::Exact);
 }
+
+// ---- M2-E2 additions: the new functions through the engine --------------
+
+#[test]
+fn normal_m2e2_exact_new_function_values_certify_exact() {
+    let mut it = Interner::new();
+    let eight = c(&mut it, 8);
+    let thousand = c(&mut it, 1000);
+    let zero = c(&mut it, 0);
+    let log2_8 = apply(&mut it, BaseFn::Log2, eight);
+    let log10_1000 = apply(&mut it, BaseFn::Log10, thousand);
+    let log1p_0 = apply(&mut it, BaseFn::Log1p, zero);
+    let expm1_0 = apply(&mut it, BaseFn::Expm1, zero);
+    let cases = [
+        ("log2(8)", log2_8, BigFloat::from_i64(3)),
+        ("log10(1000)", log10_1000, BigFloat::from_i64(3)),
+        ("log1p(0)", log1p_0, BigFloat::zero()),
+        ("expm1(0)", expm1_0, BigFloat::zero()),
+    ];
+    for (name, id, want) in cases {
+        let (result, stats) = eval(&it, id, &BigFloat::zero(), P);
+        assert_eq!(result.value(), &want, "{name}: {result:?}");
+        assert_eq!(result.quality(), Quality::Exact, "{name}: {result:?}");
+        assert!(stats.rounds() >= 1);
+    }
+}
+
+#[test]
+fn normal_m2e2_rounding_functions_certify_exact_at_points() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let abs_x = apply(&mut it, BaseFn::Abs, x);
+    let ceil_x = apply(&mut it, BaseFn::Ceil, x);
+    let floor_x = apply(&mut it, BaseFn::Floor, x);
+    let near_x = apply(&mut it, BaseFn::NearestInt, x);
+    let cases = [
+        (abs_x, bf_arg(-2.5), BigFloat::from_f64(2.5)),
+        (ceil_x, bf_arg(2.5), BigFloat::from_i64(3)),
+        (floor_x, bf_arg(2.5), BigFloat::from_i64(2)),
+        // Ties-to-even through the whole engine.
+        (near_x, bf_arg(2.5), BigFloat::from_i64(2)),
+        (near_x, bf_arg(3.5), BigFloat::from_i64(4)),
+        (near_x, bf_arg(-2.5), BigFloat::from_i64(-2)),
+        (ceil_x, bf_arg(-2.5), BigFloat::from_i64(-2)),
+        (floor_x, bf_arg(-2.5), BigFloat::from_i64(-3)),
+    ];
+    for (id, arg, want) in cases {
+        let (result, _) = eval(&it, id, &arg, P);
+        assert_eq!(result.value(), &want, "{result:?} at {arg}");
+        assert_eq!(result.quality(), Quality::Exact, "{result:?} at {arg}");
+    }
+}
+
+/// A binary64 argument helper (keeps the test table readable).
+fn bf_arg(v: f64) -> BigFloat {
+    BigFloat::from_f64(v)
+}
+
+#[test]
+fn normal_m2e2_format_conversions_certify_correct_roundings() {
+    let mut it = Interner::new();
+    let three = c(&mut it, 3);
+    let eight = c(&mut it, 8);
+    let one = c(&mut it, 1);
+    let third = it.intern(Expr::Div(one, three));
+    // An exact dyadic (3/8) lies on every format grid: the directed endpoint
+    // images coincide, the enclosure is a point, and the engine certifies
+    // Exact for all five conversions.
+    let exact_arg = it.intern(Expr::Div(three, eight));
+    for f in [
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ] {
+        let id = apply(&mut it, f, exact_arg);
+        let (result, _) = eval(&it, id, &BigFloat::zero(), P);
+        assert_eq!(
+            result.value(),
+            &BigFloat::from_f64(0.375),
+            "{f:?}: {result:?}"
+        );
+        assert_eq!(result.quality(), Quality::Exact, "{f:?}: {result:?}");
+    }
+    // 1/3 is not on any format grid: the argument kernel's inexact point is
+    // widened by the directed format rounding to the two adjacent format
+    // floats, so at the format's own target width the enclosure straddles a
+    // rounding boundary and the engine certifies FaithfulInexact. Test 2's
+    // documented deterministic choice is the *lower* adjacent float — a
+    // faithful rounding, which for 1/3 at 24 bits is not the nearest one
+    // (1/3 rounds up there), so the expectation is the directed-down image.
+    let wide = (BigFloat::one() / BigFloat::from_i64(3)).with_precision(200);
+    let double_x = apply(&mut it, BaseFn::Double, third);
+    let single_x = apply(&mut it, BaseFn::Single, third);
+    let half_x = apply(&mut it, BaseFn::HalfPrecision, third);
+    let quad_x = apply(&mut it, BaseFn::Quad, third);
+    let de_x = apply(&mut it, BaseFn::DoubleExtended, third);
+    let cases = [
+        (double_x, 53usize, wide.round_to(53, Rounding::Down)),
+        (single_x, 24, wide.round_to(24, Rounding::Down)),
+        (half_x, 11, wide.round_to(11, Rounding::Down)),
+        (quad_x, 113, wide.round_to(113, Rounding::Down)),
+        (de_x, 64, wide.round_to(64, Rounding::Down)),
+    ];
+    for (id, target, want) in cases {
+        let (result, _) = eval(&it, id, &BigFloat::zero(), target);
+        assert_eq!(result.value(), &want, "{result:?} at {target}");
+        assert_eq!(result.quality(), Quality::FaithfulInexact, "{result:?}");
+    }
+    // At a target wider than the format, the two adjacent format floats round
+    // to the same target float: Test 1 fires with a correct rounding.
+    for id in [quad_x, de_x] {
+        let (result, _) = eval(&it, id, &BigFloat::zero(), P);
+        assert_eq!(result.value(), &BigFloat::from_f64(1.0 / 3.0), "{result:?}");
+        assert!(result.is_correctly_rounded(), "{result:?}");
+    }
+}
+
+#[test]
+fn error_m2e2_new_domain_errors_are_nonreal() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let log2_x = apply(&mut it, BaseFn::Log2, x);
+    let log10_x = apply(&mut it, BaseFn::Log10, x);
+    let log1p_x = apply(&mut it, BaseFn::Log1p, x);
+    // Negative arguments: NaN.
+    for id in [log2_x, log10_x] {
+        let (result, stats) = eval(&it, id, &BigFloat::from_i64(-1), P);
+        assert_eq!(result.quality(), Quality::NonReal, "{result:?}");
+        assert!(result.value().is_nan());
+        assert_eq!(stats.rounds(), 1);
+    }
+    let (result, _) = eval(&it, log1p_x, &BigFloat::from_i64(-2), P);
+    assert_eq!(result.quality(), Quality::NonReal);
+    assert!(result.value().is_nan());
+    // The poles: -infinity, reported as the offending endpoint.
+    for (id, arg) in [
+        (log2_x, BigFloat::zero()),
+        (log10_x, BigFloat::zero()),
+        (log1p_x, -BigFloat::one()),
+    ] {
+        let (result, _) = eval(&it, id, &arg, P);
+        assert_eq!(result.quality(), Quality::NonReal, "{result:?}");
+        assert_eq!(result.value(), &BigFloat::neg_infinity());
+    }
+}
+
+#[test]
+fn normal_m2e2_non_smooth_pipeline_with_taylor_recursions() {
+    // The engine's Taylor refinement must fall back for non-smooth
+    // expressions and still certify the point value (the intersection with
+    // the naive enclosure is a no-op, never a widening).
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let two = c(&mut it, 2);
+    let ceil_x = apply(&mut it, BaseFn::Ceil, x);
+    let f = it.intern(Expr::Add(ceil_x, x));
+    let kctx = ctx(P).with_taylor_recursions(1);
+    let arg = BigFloat::from_f64(1.25);
+    let (result, _) = evaluate_faithful(&it, f, &arg, &kctx, None, None);
+    assert_eq!(result.value(), &BigFloat::from_f64(3.25));
+    assert_eq!(result.quality(), Quality::Exact, "{result:?}");
+    // double(x) * 2 at a binary64 argument: exact scaling of an exact image.
+    let double_x = apply(&mut it, BaseFn::Double, x);
+    let g = it.intern(Expr::Mul(double_x, two));
+    let third = BigFloat::from_f64(1.0 / 3.0);
+    let (result, _) = evaluate_faithful(&it, g, &third, &kctx, None, None);
+    assert_eq!(result.value(), &BigFloat::from_f64(2.0 / 3.0));
+    assert_eq!(result.quality(), Quality::Exact, "{result:?}");
+    // A wide input makes the round's argument interval non-point, so the
+    // Taylor refinement is actually consulted and must fall back: ceil(x)+x
+    // at the stored 1/3 value is 4/3, correctly rounded.
+    let wide_third = BigFloat::one() / BigFloat::from_i64(3);
+    let (result, _) = evaluate_faithful(&it, f, &wide_third, &kctx, None, None);
+    assert_eq!(result.value(), &BigFloat::from_f64(4.0 / 3.0));
+    assert!(result.is_correctly_rounded(), "{result:?}");
+    // Determinism with the recursion setting active.
+    let a = evaluate_faithful(&it, f, &arg, &kctx, None, None);
+    let b = evaluate_faithful(&it, f, &arg, &kctx, None, None);
+    assert_eq!(a.0, b.0);
+    assert_eq!(a.1, b.1);
+}
+
+#[test]
+fn robustness_m2e2_new_functions_special_matrix_never_panics() {
+    let mut it = Interner::new();
+    let x = var(&mut it);
+    let fns = [
+        BaseFn::Log2,
+        BaseFn::Log10,
+        BaseFn::Log1p,
+        BaseFn::Expm1,
+        BaseFn::Abs,
+        BaseFn::Ceil,
+        BaseFn::Floor,
+        BaseFn::NearestInt,
+        BaseFn::Double,
+        BaseFn::Single,
+        BaseFn::HalfPrecision,
+        BaseFn::Quad,
+        BaseFn::DoubleExtended,
+    ];
+    let args = [
+        BigFloat::NAN,
+        BigFloat::infinity(),
+        BigFloat::neg_infinity(),
+        BigFloat::zero(),
+        -BigFloat::zero(),
+        BigFloat::from_f64(2.5),
+    ];
+    for f in fns {
+        let id = apply(&mut it, f, x);
+        for arg in &args {
+            let (first, _) = eval(&it, id, arg, P);
+            let (second, _) = eval(&it, id, arg, P);
+            // FpResult equality goes through BigFloat's IEEE-style PartialEq
+            // (NaN != NaN), so determinism is compared by certificate and
+            // canonical bits instead.
+            assert_eq!(first.quality(), second.quality(), "{f:?} at {arg} drifted");
+            assert_eq!(
+                first.value().canonical_parts(),
+                second.value().canonical_parts(),
+                "{f:?} at {arg} drifted"
+            );
+        }
+    }
+}

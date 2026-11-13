@@ -18,11 +18,22 @@
 //!
 //! # Derivative table
 //!
-//! The base-function table covers **all seventeen** [`BaseFn`] variants; the
+//! The base-function table covers **all thirty** [`BaseFn`] variants; the
 //! `match` is exhaustive, so the compiler rejects the build if a future variant
 //! is added without a derivative rule. Every rule is built purely as an [`Expr`]
 //! AST (constants via [`BigFloat::from_i64`], [`Expr::Pi`], `Apply`, `Pow`, …);
 //! no rule evaluates anything at differentiation time.
+//!
+//! # Non-smooth functions
+//!
+//! `abs`, the integer roundings (`ceil`/`floor`/`nearestint`) and the format
+//! conversions are not differentiable at their breakpoints. Their rules are
+//! conservative almost-everywhere derivatives: `0` for the step functions and
+//! `sign(u) = u/|u|` for `abs` (undefined at the kink). These rules are sound
+//! for symbolic callers between breakpoints; the Taylor refiner
+//! ([`crate::taylor`]) never applies the mean-value form across a breakpoint
+//! because it falls back to naive interval evaluation whenever the expression
+//! contains a non-smooth function.
 
 use std::collections::HashMap;
 
@@ -232,6 +243,54 @@ fn base_fn_derivative(it: &mut Interner, f: BaseFn, u: NodeId) -> NodeId {
         BaseFn::Erfc => {
             let core = erf_derivative_core(it, u);
             it.intern(Expr::Neg(core))
+        }
+        BaseFn::Log2 => {
+            // 1 / (u * ln 2); ln 2 stays symbolic (nothing is evaluated here).
+            let ln2 = it.intern(Expr::Apply(BaseFn::Ln, two));
+            let den = it.intern(Expr::Mul(u, ln2));
+            it.intern(Expr::Div(one, den))
+        }
+        BaseFn::Log10 => {
+            // 1 / (u * ln 10).
+            let ten = constant(it, 10);
+            let ln10 = it.intern(Expr::Apply(BaseFn::Ln, ten));
+            let den = it.intern(Expr::Mul(u, ln10));
+            it.intern(Expr::Div(one, den))
+        }
+        BaseFn::Log1p => {
+            // 1 / (1 + u).
+            let den = it.intern(Expr::Add(one, u));
+            it.intern(Expr::Div(one, den))
+        }
+        BaseFn::Expm1 => it.intern(Expr::Apply(BaseFn::Exp, u)),
+        BaseFn::Abs => {
+            // Conservative a.e. derivative: sign(u) = u / |u|, which is +-1
+            // away from the kink and undefined (NaN under interval evaluation)
+            // at zero. Expressions containing abs never reach the Taylor
+            // mean-value form (crate::taylor falls back to naive), so this
+            // rule only serves symbolic callers.
+            let abs_u = it.intern(Expr::Apply(BaseFn::Abs, u));
+            it.intern(Expr::Div(u, abs_u))
+        }
+        BaseFn::Ceil | BaseFn::Floor | BaseFn::NearestInt => {
+            // Conservative a.e. derivative: step functions are locally
+            // constant between their integer (or half-integer) breakpoints,
+            // so the derivative is 0 almost everywhere. The jumps carry no
+            // classical derivative; the Taylor refiner never uses this rule
+            // because expressions containing these functions fall back to
+            // naive interval evaluation (crate::taylor).
+            constant(it, 0)
+        }
+        BaseFn::Double
+        | BaseFn::Single
+        | BaseFn::HalfPrecision
+        | BaseFn::Quad
+        | BaseFn::DoubleExtended => {
+            // Conservative a.e. derivative: format rounding is piecewise
+            // constant between rounding boundaries, hence 0 almost
+            // everywhere. As with the integer roundings, the Taylor refiner
+            // falls back to naive for expressions containing a conversion.
+            constant(it, 0)
         }
     }
 }
