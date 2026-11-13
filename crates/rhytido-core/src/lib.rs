@@ -16,6 +16,7 @@ pub mod message;
 pub mod print;
 pub mod quality;
 pub mod taylor;
+pub mod value;
 
 pub use context::{Context, MIN_PRECISION};
 pub use diff::differentiate;
@@ -28,3 +29,4 @@ pub use message::{Message, MessageCatalog};
 pub use print::print_expr;
 pub use quality::Quality;
 pub use taylor::eval_taylor;
+pub use value::{Atom, Bound, LangError, Range};
