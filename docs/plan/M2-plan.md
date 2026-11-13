@@ -9,7 +9,8 @@
 | M2-A 函数族补齐 | ✅ 完成 | backend 178 / workspace **271 全绿**（基线 210 零丢失 + 61）；fmt/clippy EXIT=0；严格 π 界 + 精确格点判定抽查合格 |
 | M2-B erf/erfc 自研 | ✅ 完成 | backend 226 / workspace **319 全绿**（零丢失 +48：erf 单元 18 + 模块 27 + doctest 3）；6 公开常数首跑全过 + 独立 Simpson oracle 交叉验证 ~19–22 位；fmt/clippy EXIT=0；lead 抽查 Bracket/series_bound/阈值链合格 |
 | M2-C 区间求值 + Ziv 引擎 | ✅ 完成 | workspace **459 全绿**（319 零丢失 +140）；Test1/2/3+cutoff+「再加一元」+512p 预算+8 态证书+hook 穿线，lead 抽查 certify/same_bits/pi_interval 合格；两执行者均中途终止，lead 按 §7 亲自收尾（clippy 值恒等修复/fmt/清理） |
-| M2-D autodiff + Taylor | ⏳ 待派发 | 契约已备 docs/plan/M2-stage3-tasks.md |
+| M2-D autodiff + Taylor | ✅ 完成 | workspace **509 全绿**（459 零丢失 +50）；17 变体导数表 + 中值形式 Taylor + naive∩Taylor 集成（空交回退/保号零）；收尾者修复前任包含性漏洞（0·x⁻¹ 可去奇点）；lead 抽查 intersect/contains_variable/回退合格 |
+| M2-E Display 往返 + BaseFn 收齐 + 验收 | ⏳ 待派发 | 契约已备 docs/plan/M2-E-dispatch.md（E1 backend→E2 core→E3 报告，串行） |
 | M2-E Display 往返 + 验收 | ⏳ 待启动 | |
 
 ## 1. 现状盘点（工具取证）
