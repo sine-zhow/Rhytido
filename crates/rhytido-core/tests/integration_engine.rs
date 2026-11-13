@@ -773,12 +773,11 @@ fn normal_m2e2_new_function_pipeline_cross_checks() {
             "{name}: enclosure {enc} misses the reference {reference}"
         );
         // The faithful engine agrees with the reference's target rounding
-        // whenever it certifies a correct rounding. A format conversion
-        // narrower than the target keeps a two-float enclosure at its own
-        // grid, which spans many target floats: the engine honestly gives up
-        // (NotFaithful) and reports the documented nearest image of the lower
-        // endpoint. A faithful certificate stays within one target ulp of
-        // the reference.
+        // whenever it certifies a correct rounding. With nearest endpoint
+        // rounding (M2-E2b) a point argument collapses the format enclosure
+        // to the nearest format float, so the conversions certify a correct
+        // rounding here; the other branches remain as defensive checks (a
+        // faithful certificate stays within one target ulp of the reference).
         let (result, stats) = evaluate_faithful(&it, id, &arg, &ctx(53), None, None);
         assert!(stats.rounds() >= 1);
         if result.is_correctly_rounded() {
@@ -874,10 +873,12 @@ fn normal_m2e2_format_conversion_composition_pipeline() {
     let c2 = eval_point(&it, double_x, &third, 165);
     assert_eq!(c1, c2);
     // The engine certifies the composed conversion at the binary32 width:
-    // the enclosure spans the two adjacent binary32 floats, so Test 2 returns
-    // the lower one (the documented deterministic faithful choice). `b` is
-    // already on the 24-bit grid, so the lower neighbour is `next_below`.
+    // nearest endpoint rounding collapses the point argument to the single
+    // nearest binary32 float, so Test 1 certifies Exact with the nearest
+    // image `b`. (M2-E2b correction: the former directed endpoints pinned
+    // Test 2's lower neighbor `b.next_below(24)`, a faithful but not nearest
+    // rounding — the wrong expectation for round-to-nearest semantics.)
     let (result, _) = evaluate_faithful(&it, single_of_double, &third, &ctx(24), None, None);
-    assert_eq!(result.value(), &b.next_below(24));
-    assert!(result.is_faithful(), "{result:?}");
+    assert_eq!(result.value(), &b);
+    assert_eq!(result.quality(), Quality::Exact, "{result:?}");
 }

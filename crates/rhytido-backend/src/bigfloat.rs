@@ -175,6 +175,13 @@ impl BigFloat {
         Self::num(FBin::from_parts(i.into_ibig(), 0))
     }
 
+    /// Constructs from canonical `(significand, exponent)` parts, stored
+    /// exactly with no precision relabeling (crate-internal kernel support
+    /// for the format rounder, which builds its result on an exact grid).
+    pub(crate) fn from_parts(sig: Integer, exp: isize) -> Self {
+        Self::num(FBin::from_parts(sig.into_ibig(), exp))
+    }
+
     /// Returns the precision in bits (0 means unlimited; NaN reports 0).
     pub fn precision(&self) -> usize {
         match &self.value {

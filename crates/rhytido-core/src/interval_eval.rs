@@ -375,7 +375,7 @@ fn pow_interval(a: &Interval, b: &Interval) -> Interval {
 /// functions through checked error bounds (`erf`/`erfc`), the new smooth
 /// functions (`log2`/`log10`/`log1p`/`expm1`) and the rounding functions
 /// (`abs`/`ceil`/`floor`/`nearestint`) through their backend interval kernels,
-/// and the format conversions through directed endpoint rounding
+/// and the format conversions through nearest endpoint rounding
 /// ([`format_interval`]). Each widens outward as documented in the backend.
 fn apply_interval(f: BaseFn, arg: &Interval) -> Interval {
     match f {
@@ -412,20 +412,26 @@ fn apply_interval(f: BaseFn, arg: &Interval) -> Interval {
     }
 }
 
-/// Encloses format conversion by directed rounding of the endpoints.
+/// Encloses format conversion by nearest rounding of the endpoints.
 ///
-/// Format rounding is monotone in every mode, and for any `x` in `[lo, hi]`
-/// `round_down(lo) <= round_nearest(x) <= round_up(hi)`, so rounding the lower
-/// endpoint down and the upper endpoint up to the format contains the whole
-/// image. The endpoints are then exactly representable at the format's width,
-/// so the outward rounding of [`Interval::new`] adds no further width. NaN and
-/// empty inputs propagate unchanged; infinite endpoints pass through
+/// Format conversion is round-to-nearest (Sollya semantics), and
+/// round-to-nearest-format is monotone: for any `x` in `[lo, hi]`,
+/// `rn(lo) <= rn(x) <= rn(hi)`, so `[rn(lo), rn(hi)]` contains the whole
+/// image. Nearest endpoints are used rather than directed ones because they
+/// are the tightest valid enclosure: the directed pair `[rd(lo), ru(hi)]`
+/// brackets two adjacent format floats even for a point input, which would
+/// cost the faithful engine its point collapse (Test 1) and could return the
+/// lower neighbor instead of the nearest one. With nearest endpoints a point
+/// input folds to a point, so the engine certifies Exact / CorrectlyRounded.
+/// The endpoints are exactly representable at the format's width, so the
+/// outward rounding of [`Interval::new`] adds no further width. NaN and empty
+/// inputs propagate unchanged; infinite endpoints pass through
 /// `round_to_format` untouched.
 fn format_interval(format: Format, arg: &Interval) -> Interval {
     match (arg.lower(), arg.upper()) {
         (Some(lo), Some(hi)) => Interval::new(
-            lo.round_to_format(format, Rounding::Down),
-            hi.round_to_format(format, Rounding::Up),
+            lo.round_to_format(format, Rounding::Nearest),
+            hi.round_to_format(format, Rounding::Nearest),
         ),
         _ => arg.clone(),
     }

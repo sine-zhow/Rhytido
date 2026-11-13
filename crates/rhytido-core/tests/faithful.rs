@@ -1166,13 +1166,14 @@ fn normal_m2e2_format_conversions_certify_correct_roundings() {
         );
         assert_eq!(result.quality(), Quality::Exact, "{f:?}: {result:?}");
     }
-    // 1/3 is not on any format grid: the argument kernel's inexact point is
-    // widened by the directed format rounding to the two adjacent format
-    // floats, so at the format's own target width the enclosure straddles a
-    // rounding boundary and the engine certifies FaithfulInexact. Test 2's
-    // documented deterministic choice is the *lower* adjacent float — a
-    // faithful rounding, which for 1/3 at 24 bits is not the nearest one
-    // (1/3 rounds up there), so the expectation is the directed-down image.
+    // 1/3 is not on any format grid, but format conversion is round-to-
+    // nearest: the nearest endpoint images of the argument point coincide,
+    // so the enclosure collapses to the single nearest format float. At the
+    // format's own target width that point is exactly representable and
+    // Test 1 certifies Exact with the nearest image. (M2-E2b correction:
+    // the former directed endpoints pinned Test 2's lower-neighbor choice,
+    // a faithful but not nearest rounding — the wrong expectation for
+    // Sollya's round-to-nearest format semantics.)
     let wide = (BigFloat::one() / BigFloat::from_i64(3)).with_precision(200);
     let double_x = apply(&mut it, BaseFn::Double, third);
     let single_x = apply(&mut it, BaseFn::Single, third);
@@ -1180,22 +1181,30 @@ fn normal_m2e2_format_conversions_certify_correct_roundings() {
     let quad_x = apply(&mut it, BaseFn::Quad, third);
     let de_x = apply(&mut it, BaseFn::DoubleExtended, third);
     let cases = [
-        (double_x, 53usize, wide.round_to(53, Rounding::Down)),
-        (single_x, 24, wide.round_to(24, Rounding::Down)),
-        (half_x, 11, wide.round_to(11, Rounding::Down)),
-        (quad_x, 113, wide.round_to(113, Rounding::Down)),
-        (de_x, 64, wide.round_to(64, Rounding::Down)),
+        (double_x, 53usize, wide.round_to(53, Rounding::Nearest)),
+        (single_x, 24, wide.round_to(24, Rounding::Nearest)),
+        (half_x, 11, wide.round_to(11, Rounding::Nearest)),
+        (quad_x, 113, wide.round_to(113, Rounding::Nearest)),
+        (de_x, 64, wide.round_to(64, Rounding::Nearest)),
     ];
     for (id, target, want) in cases {
         let (result, _) = eval(&it, id, &BigFloat::zero(), target);
         assert_eq!(result.value(), &want, "{result:?} at {target}");
-        assert_eq!(result.quality(), Quality::FaithfulInexact, "{result:?}");
+        assert_eq!(result.quality(), Quality::Exact, "{result:?}");
     }
-    // At a target wider than the format, the two adjacent format floats round
-    // to the same target float: Test 1 fires with a correct rounding.
+    // At the binary64 target the narrow images (double/single/half) are
+    // exactly representable and stay Exact. The wide images (quad/de) exceed
+    // the round's working precision (target + 10), so the final outward
+    // rounding leaves a two-float enclosure: Test 1 still certifies the
+    // correct rounding, without the point-exactness claim.
+    for id in [double_x, single_x, half_x] {
+        let (result, _) = eval(&it, id, &BigFloat::zero(), P);
+        assert_eq!(result.quality(), Quality::Exact, "{result:?}");
+    }
     for id in [quad_x, de_x] {
         let (result, _) = eval(&it, id, &BigFloat::zero(), P);
         assert_eq!(result.value(), &BigFloat::from_f64(1.0 / 3.0), "{result:?}");
+        assert_eq!(result.quality(), Quality::CorrectlyRounded, "{result:?}");
         assert!(result.is_correctly_rounded(), "{result:?}");
     }
 }

@@ -874,7 +874,7 @@ fn normal_m2e2_integer_rounding_images_cross_breakpoints() {
 }
 
 #[test]
-fn normal_m2e2_format_intervals_use_directed_endpoint_rounding() {
+fn normal_m2e2_format_intervals_use_nearest_endpoint_rounding() {
     let mut it = Interner::new();
     let x = it.intern(Expr::Variable);
     let formats = [
@@ -893,17 +893,15 @@ fn normal_m2e2_format_intervals_use_directed_endpoint_rounding() {
     for (f, format) in formats {
         let id = apply(&mut it, f, x);
         let enc = eval_interval(&it, id, &span, 165, None);
-        // Directed endpoint images: lower rounded down, upper rounded up.
-        let want_lo = lo.round_to_format(format, Rounding::Down);
-        let want_hi = hi.round_to_format(format, Rounding::Up);
+        // Nearest endpoint images (M2-E2b: replaces the directed Down/Up
+        // pair, which was a valid but looser enclosure). The endpoints are
+        // exactly representable at the format width, so the outward
+        // construction adds no width: equality, not just containment.
+        let want_lo = lo.round_to_format(format, Rounding::Nearest);
+        let want_hi = hi.round_to_format(format, Rounding::Nearest);
         assert!(
-            enc.contains(&want_lo),
-            "{}: {enc} misses {want_lo}",
-            fn_name(f)
-        );
-        assert!(
-            enc.contains(&want_hi),
-            "{}: {enc} misses {want_hi}",
+            endpoints_eq(&enc, &want_lo, &want_hi),
+            "{}: {enc} != [{want_lo}, {want_hi}]",
             fn_name(f)
         );
         // Every interior point's nearest image is contained too.
@@ -942,16 +940,24 @@ fn normal_m2e2_format_intervals_cross_rounding_boundaries() {
     let span = Interval::new(lo.clone(), hi.clone());
     let enc = eval_interval(&it, single_x, &span, 165, None);
     assert!(enc.contains(&lo) && enc.contains(&hi), "{enc}");
-    // A point input converts exactly (nearest), at every working precision.
+    // A point input converts to the single nearest format float (M2-E2b:
+    // nearest endpoints fold a point to a point; the former directed pair
+    // straddled two adjacent format floats). The evaluator's final outward
+    // rounding to `prec` then keeps that image exact once prec >= 53, and
+    // otherwise brackets it by one prec-ulp.
     let third = BigFloat::one() / BigFloat::from_i64(3);
+    let image = third.round_to_format(rhytido_backend::Format::Double, Rounding::Nearest);
     for prec in SAMPLE_PRECS {
         let enc = eval_interval(&it, double_x, &point(&third), prec, None);
+        let want_lo = image.round_to(prec, Rounding::Down);
+        let want_hi = image.round_to(prec, Rounding::Up);
         assert!(
-            enc.contains(
-                &third.round_to_format(rhytido_backend::Format::Double, Rounding::Nearest)
-            ),
+            endpoints_eq(&enc, &want_lo, &want_hi),
             "double(1/3) at {prec}: {enc}"
         );
+        if prec >= 53 {
+            assert!(enc.is_point(), "double(1/3) at {prec}: {enc}");
+        }
     }
 }
 
