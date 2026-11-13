@@ -21,6 +21,8 @@
 
 | 10 | fb43f2c7 | M2-E1 Display 往返修复 | backend/** | ✅ 成功 | 带根因修复+参考规格+Rust 优化条款一次成功；Display ceil(p·log10(2))+1 位修复 (2^53−1) 怪癖、FromStr 配套 max(165,D·10/3+1) 向后兼容（lead 复核采纳）；+6 往返属性（p∈{11..300}含非规格化）、解除 ≤15 位限制恢复全精度交叉核对（加强非弱化）；workspace 509→515 零丢失、core 无扰；证据式报告与 lead 复核逐项吻合。评级：优秀 |
 
+| 11 | 56e7b9bd | M2-E2 BaseFn 收齐 | core/** | ✅ 成功 | 带根因修复+参考规格+Rust 优化条款一次成功；BaseFn 17→30 + is_smooth 穷尽分类 + 非光滑 Taylor 回退（contains_non_smooth 记忆化，clone/求导前判定）；+40 测试（非光滑回退专门包含性 9 函数×跨断点×33 点×prec×k、30 变体导数恒等式+中心差分）；workspace 515→555 零丢失、backend 无扰；**诚实标记两处格式语义缺口**（backend round_to_format 无溢出/次正规；format_interval 定向端点致值未必最近——后者源于 lead 的 Down/Up 指示），留 M2-E2b 补全。评级：优秀 |
+
 ## 2. 经验（经证实有效的做法，保持）
 
 - **详尽契约**：API 签名、算法参数（P=p+3ceil(x²)+guard）、测试清单（含具体常数值与"禁改常数迁就输出"条款）、门禁命令、报告格式全部写入提示词 → 3/3 成功任务一次通过 lead 复核。

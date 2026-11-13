@@ -11,7 +11,9 @@
 | M2-C 区间求值 + Ziv 引擎 | ✅ 完成 | workspace **459 全绿**（319 零丢失 +140）；Test1/2/3+cutoff+「再加一元」+512p 预算+8 态证书+hook 穿线，lead 抽查 certify/same_bits/pi_interval 合格；两执行者均中途终止，lead 按 §7 亲自收尾（clippy 值恒等修复/fmt/清理） |
 | M2-D autodiff + Taylor | ✅ 完成 | workspace **509 全绿**（459 零丢失 +50）；17 变体导数表 + 中值形式 Taylor + naive∩Taylor 集成（空交回退/保号零）；收尾者修复前任包含性漏洞（0·x⁻¹ 可去奇点）；lead 抽查 intersect/contains_variable/回退合格 |
 | M2-E1 Display 往返 | ✅ 完成 | workspace **515 全绿**（509 零丢失 +6 往返属性）；Display ceil(p·log10(2))+1 位、FromStr 配套 max(165,D·10/3+1) 向后兼容；解除 ≤15 位限制恢复全精度交叉核对；lead 抽查位数推导/FromStr 合格 |
-| M2-E2 BaseFn 收齐 / E3 验收 | ⏳ 待派发 | 契约 docs/plan/M2-E-dispatch.md（E2 core→E3 报告，串行） |
+| M2-E2 BaseFn 收齐 | ✅ 完成 | workspace **555 全绿**（515 零丢失 +40）；BaseFn 17→30 + is_smooth + 非光滑 Taylor 回退；lead 抽查 is_smooth/回退/format_interval 合格 |
+| M2-E2b 格式语义补全 | ⏳ 待派发 | backend round_to_format 溢出/次正规/指数钳制 + core format_interval 最近端点（修复格式转换值未必最近）；E2 诚实标记的遗留缺口 |
+| M2-E3 验收 | ⏳ 待派发 | 依赖 E2b；契约 docs/plan/M2-E-dispatch.md |
 | M2-E Display 往返 + 验收 | ⏳ 待启动 | |
 
 ## 1. 现状盘点（工具取证）

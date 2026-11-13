@@ -41,6 +41,7 @@
 - **M2-C 更新（2026-11-13，lead 独立验收）**：+140（backend +23：next_* 单元 6 / bigfloat 模块 +15 / doctest +2；core +117：单元 +41、faithful 27、interval_eval 24、integration_engine 15、eval +3、expr +2、print +2、doctest +3）。现状 backend：单元 48 / 模块 156 / 集成 8 / doctest 10 = **249**；core：单元 50 / 模块 133 / 集成 22 / doctest 3 = **210**；**workspace 459 全绿，基线零丢失**。lead 收尾修复：8 处 approx_constant 以值恒等 std 常量替换（断言不弱化）、fmt 一处、游离基线日志删除。
 - **M2-D 更新（2026-11-13，lead 独立验收）**：+50（core：diff 模块 14、taylor 模块 15、faithful 模块 +6、faithful 单元 +7、context 模块 +6、doctest +2；backend 249 不变）。现状 core：单元 57 / 模块 176 / 集成 22 / doctest 5 = **260**；**workspace 509 全绿，基线零丢失**。收尾者实测发现并修复前任 Taylor 包含性漏洞（可去奇点 0·x⁻¹ 跨零→NaN，逐层回退 naive），专项测试钉住。
 - **M2-E1 更新（2026-11-13，lead 独立验收）**：+6（backend bigfloat 模块 76→82 往返属性；core 260 无扰）。现状 backend **255**（单元 48 / 模块 189 / 集成 8 / doctest 10）；**workspace 515 全绿，基线零丢失**。Display 往返修复（§4b 怪癖收口）+ 解除 ≤15 位限制恢复全精度交叉核对（加强非弱化）。
+- **M2-E2 更新（2026-11-13，lead 独立验收）**：+40（core：diff +4、eval +7、expr +4、faithful +6、integration_engine +3、interval_eval +7、print +3、taylor +6；backend 255 不变）。现状 core：单元 57 / 模块 213 / 集成 25 / doctest 5 = **300**；**workspace 555 全绿，基线零丢失**。BaseFn 17→30 + is_smooth（21 光滑/9 非光滑）+ 非光滑 Taylor 回退。**遗留格式语义缺口（M2-E2b 补全）**：backend round_to_format 无溢出/次正规/指数钳制；format_interval 定向端点致格式转换值未必最近。
 
 ## 4. 验收证据（集中门禁，lead 实测）
 
