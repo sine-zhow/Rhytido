@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Concrete-syntax grammar for Rhytido mathematical expressions.
+//!
+//! This grammar parses a decimal/identifier expression source into the core
+//! interned AST (`rhytido_core::Expr`, interned to a `NodeId`). The `interner`
+//! state parameter is threaded through every action so nodes are interned as
+//! they are built; structurally identical sub-expressions therefore share one
+//! `NodeId` (hash-consing, ADR-1).
+//!
+//! The precedence and associativity encoded here are chosen to be exactly the
+//! inverse of the canonical printer in `rhytido_core::print`, so that
+//! `parse ∘ print` is a fixpoint on printer-canonical strings (see the
+//! integration tests). The layering, lowest precedence first:
+//!
+//! 1. `+` / `-` (binary) — left associative
+//! 2. `*` / `/` — left associative
+//! 3. unary `-`
+//! 4. `^` — right associative
+//! 5. atoms: numbers, `pi`, `_x_`, `NaN`, base-function application, `(...)`
+//!
+//! The lexer is lalrpop's built-in one; whitespace is skipped automatically.
+
+use rhytido_backend::BigFloat;
+use rhytido_core::{BaseFn, Expr, Interner, NodeId};
+use std::str::FromStr;
+
+// The `'input` lifetime is implicit for a built-in lexer (no extern token
+// enum), so the grammar is declared without type parameters and the `interner`
+// state parameter is threaded straight into every action.
+grammar(interner: &mut Interner);
+
+// ---------------------------------------------------------------------------
+// Lexical structure.
+//
+// The built-in lexer matches the longest declared token, so the function and
+// reserved-word literals below need no explicit precedence block: a name that
+// is also a prefix of a longer name (e.g. `log` vs `log2`) resolves to the
+// longer one when the input continues that way, and to the shorter one
+// otherwise. Numeric literals come from the one regex in the `Num` rule; it
+// cannot match any letter-leading keyword, so it never collides with them.
+//
+// There is no catch-all identifier token: an unknown identifier lexes as no
+// token at all and the lexer reports an unrecognized-token error, which is the
+// specified behavior (symbol fallback is a command-layer feature for B2+).
+//
+// Deliberately *not* lexed here (distillation for later tasks, see the task
+// report): base-prefix literals (`0x`/`0b`/`0o`), dashu's `@` scale marker,
+// digit-grouping underscores, and the `inf`/`infinity` spellings. `NaN` is the
+// one special-value spelling implemented, because the canonical printer emits
+// it and the round-trip contract requires accepting it back.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Entry point and precedence chain.
+// ---------------------------------------------------------------------------
+
+/// Top-level expression: the additive (lowest-precedence) layer.
+pub Expr: NodeId = Sum;
+
+/// Precedence 1, left associative: `e + t`, `e - t`.
+Sum: NodeId = {
+    <a:Sum> "+" <b:Product> => interner.intern(Expr::Add(a, b)),
+    <a:Sum> "-" <b:Product> => interner.intern(Expr::Sub(a, b)),
+    Product,
+};
+
+/// Precedence 2, left associative: `e * t`, `e / t`.
+Product: NodeId = {
+    <a:Product> "*" <b:Unary> => interner.intern(Expr::Mul(a, b)),
+    <a:Product> "/" <b:Unary> => interner.intern(Expr::Div(a, b)),
+    Unary,
+};
+
+/// Precedence 3: prefix unary negation, right associative via self-recursion.
+Unary: NodeId = {
+    "-" <a:Unary> => interner.intern(Expr::Neg(a)),
+    Power,
+};
+
+/// Precedence 4, right associative: `b ^ e`. The base is an atom (so `-` never
+/// lands on the left of `^` without an explicit group) and the exponent is a
+/// unary term (so `-5` and a nested `^` are both valid exponents).
+Power: NodeId = {
+    <a:Atom> "^" <b:Unary> => interner.intern(Expr::Pow(a, b)),
+    Atom,
+};
+
+/// Precedence 5: literals, reserved atoms, function application, grouping.
+Atom: NodeId = {
+    Num,
+    "pi" => interner.intern(Expr::Pi),
+    "_x_" => interner.intern(Expr::Variable),
+    "NaN" => interner.intern(Expr::Constant(BigFloat::NAN)),
+    <f:Fun> "(" <a:Sum> ")" => interner.intern(Expr::Apply(f, a)),
+    "(" <a:Sum> ")" => a,
+};
+
+/// A decimal literal. Every token the regex accepts is a dashu-valid decimal
+/// (`aaa`, `aaa.`, `aaa.bbb`, `.bbb`, each with an optional signed `e`/`E`
+/// exponent), which is the totality precondition that makes the `from_str`
+/// below infallible.
+Num: NodeId = {
+    <s:r"(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"> => {
+        interner.intern(Expr::Constant(
+            BigFloat::from_str(s)
+                .expect("token matched by the number regex is a valid decimal"),
+        ))
+    },
+};
+
+/// Base-function names. The `log` alias resolves to the natural logarithm, per
+/// the M2 acceptance note (the canonical printer still renders it as `ln`).
+Fun: BaseFn = {
+    "sqrt" => BaseFn::Sqrt,
+    "exp" => BaseFn::Exp,
+    "ln" => BaseFn::Ln,
+    "log" => BaseFn::Ln,
+    "sin" => BaseFn::Sin,
+    "cos" => BaseFn::Cos,
+    "tan" => BaseFn::Tan,
+    "asin" => BaseFn::Asin,
+    "acos" => BaseFn::Acos,
+    "atan" => BaseFn::Atan,
+    "sinh" => BaseFn::Sinh,
+    "cosh" => BaseFn::Cosh,
+    "tanh" => BaseFn::Tanh,
+    "asinh" => BaseFn::Asinh,
+    "acosh" => BaseFn::Acosh,
+    "atanh" => BaseFn::Atanh,
+    "erf" => BaseFn::Erf,
+    "erfc" => BaseFn::Erfc,
+    "log2" => BaseFn::Log2,
+    "log10" => BaseFn::Log10,
+    "log1p" => BaseFn::Log1p,
+    "expm1" => BaseFn::Expm1,
+    "abs" => BaseFn::Abs,
+    "ceil" => BaseFn::Ceil,
+    "floor" => BaseFn::Floor,
+    "nearestint" => BaseFn::NearestInt,
+    "double" => BaseFn::Double,
+    "single" => BaseFn::Single,
+    "halfprecision" => BaseFn::HalfPrecision,
+    "quad" => BaseFn::Quad,
+    "doubleextended" => BaseFn::DoubleExtended,
+};

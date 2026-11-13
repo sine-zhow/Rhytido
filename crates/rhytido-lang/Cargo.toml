@@ -13,6 +13,16 @@ categories = ["mathematics", "development-tools"]
 [dependencies]
 rhytido-backend = { workspace = true }
 rhytido-core = { workspace = true }
+thiserror = { workspace = true }
+# The `lexer` feature backs lalrpop's *built-in* scanner: the generated grammar
+# emits regex-matching code that lives in `lalrpop_util::lexer`. Without it the
+# built-in lexer (the design for this task — no custom extern lexer) does not
+# compile. The dependency chain (regex-automata/regex-syntax) is already in the
+# offline registry cache.
+lalrpop-util = { workspace = true, features = ["lexer"] }
+
+[build-dependencies]
+lalrpop = { workspace = true }
 
 [lints]
 workspace = true

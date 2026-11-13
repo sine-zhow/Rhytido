@@ -57,9 +57,11 @@
 //! ```
 
 pub mod context;
+pub mod parse;
 pub mod symbol;
 pub mod value;
 
 pub use context::{DisplayMode, Frame, Session, Settings};
+pub use parse::{ParseError, parse_expr};
 pub use symbol::{SymbolId, SymbolTable};
 pub use value::Value;
