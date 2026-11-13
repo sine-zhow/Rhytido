@@ -44,6 +44,8 @@
 - **M2-E2 更新（2026-11-13，lead 独立验收）**：+40（core：diff +4、eval +7、expr +4、faithful +6、integration_engine +3、interval_eval +7、print +3、taylor +6；backend 255 不变）。现状 core：单元 57 / 模块 213 / 集成 25 / doctest 5 = **300**；**workspace 555 全绿，基线零丢失**。BaseFn 17→30 + is_smooth（21 光滑/9 非光滑）+ 非光滑 Taylor 回退。**遗留格式语义缺口（M2-E2b 补全）**：backend round_to_format 无溢出/次正规/指数钳制；format_interval 定向端点致格式转换值未必最近。
 - **M2-E2b 更新（2026-11-13，lead 独立验收）**：+14（backend format 模块 10→23 + doctest +1；core 300 不变，仅修正断言）。现状 backend **269**；**workspace 569 全绿，基线零丢失**。补全两处格式缺口：round_to_format 完整 IEEE（exponent_range/次正规网格/舍入后溢出判定/6 模式溢出规则，精确整数算术）；format_interval 最近端点（点折叠→Exact/CorrectlyRounded，原 Down/Up 弱证书断言修正为加强）。
 - **M2 收口（2026-11-13，lead 验收）**：M2 全里程碑通过（M2-acceptance.md）——三判据（8 态证书/函数族差分/cutoff）全满足，**workspace 569 全绿**（backend 269 / core 300），三门禁 EXIT=0，基线全程零丢失。DD/TD 延后 M6；evaluate_faithful 微基准延后性能阶段（先正确后快）。
+- **M3-A1 更新（2026-11-13，lead 独立验收，提交 ef37fa3）**：+76（core：value 模块 64（normal 23/extreme 20/error 10/robustness 11）、单元 +7（私有 float_eq/float_hash/rational_hash 核）、doctest +5）。现状 core：单元 64 / 模块 213+64 / 集成 25 / doctest 10 = **376**；**workspace 645 全绿，基线零丢失**。原子值 `Atom`（ADR-10）：构造全域、相等沿用 interning canonical_parts 先例、无 Ord/无字节级 Display（表现归 L6）。
+- **M3-A2 更新（2026-11-13，lead 独立验收，提交 5a1b5fe）**：+129（lang：模块 symbol 20 / value 30 / context 40、单元 10、集成 19、doctest 10；四类齐备，含跨帧遮蔽、assign 命中外层帧、1000 层帧栈、10000 元素列表重建、panic 展开文档化边界）。**workspace 774 全绿**（backend 269 / core 376 / lang 129），三门禁 EXIT=0，645 基线零丢失。rhytido-lang 三层结构自始按 §4 建齐。
 
 ## 4. 验收证据（集中门禁，lead 实测）
 

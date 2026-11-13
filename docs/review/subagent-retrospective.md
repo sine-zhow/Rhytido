@@ -25,6 +25,9 @@
 
 | 12 | 32ac1684 | M2-E2b 格式语义补全 | backend+core | ✅ 成功 | 带根因修复条款一次成功；round_to_format 完整 IEEE（canonical_parts 精确整数量化、舍入后溢出判定覆盖 emax 进位、6 模式溢出/下溢规则、次正规网格）+ Format::exponent_range；format_interval 最近端点修复值未必最近（点折叠→Exact/CorrectlyRounded）；+13 溢出/次正规测试+单调性/幂等/包围属性；修正原 Down/Up 弱证书断言为加强（非弱化）；workspace 555→569 零丢失；证据式报告与 lead 复核逐项吻合。评级：优秀 |
 
+| 13 | 14ddff4b | M3-A1 core 原子值 Atom（ADR-10） | core value.rs + tests/value.rs + lib.rs 两行 | ✅ 成功 | +76 测试（模块 64/单元 7/doc 5），workspace 569→645 零回归，三门禁 lead 独立复跑 EXIT=0；抽查与 ADR-10 逐句吻合；规格外 6 决策全部取"保持表示/不预测语义"最小路线；**主动更正自报计数偏差并复跑门禁**（22/21/10/11→23/20/10/11），诚实机制见效；实证发现归档：相邻精度 π 的 canonical_parts 重合（"精度不同⇒值不同"不成立，M3-C/D 夹具注意）。评级：优秀 |
+| 14 | 63e143f2 | M3-A2 lang crate + Session 帧栈（ADR-9/11） | crates/rhytido-lang/** + 根 Cargo.toml/Cargo.lock | ✅ 成功 | +129 测试（模块 90/单元 10/集成 19/doc 10），workspace 645→774 零回归，三门禁 lead 独立复跑 EXIT=0；assign/with_frame/pop_frame 契约抽查逐句对 ADR-11；已知边界**如实文档化并钉测试**（panic 展开不弹帧→M3-E 重建处置；跨表 SymbolId 别名）；proc/function 表示延后 B1 的理由写入模块文档与台账（body 需语法树，不预判）。评级：优秀 |
+
 ## 2. 经验（经证实有效的做法，保持）
 
 - **详尽契约**：API 签名、算法参数（P=p+3ceil(x²)+guard）、测试清单（含具体常数值与"禁改常数迁就输出"条款）、门禁命令、报告格式全部写入提示词 → 3/3 成功任务一次通过 lead 复核。

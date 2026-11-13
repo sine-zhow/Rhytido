@@ -1,13 +1,14 @@
 # 会话交接 · Rhytido（新会话 Agent 快速上手）
 
-> 2026-11-13 由上一会话 lead 撰写。**新会话第一步：读本文 + AGENTS.md（自动加载）**。项目=Rhytido，用 Rust 净室重实现 Sollya 数值引擎。回复用**中文**。
+> 2026-11-13 由上一会话 lead 撰写；同日由本会话 lead 更新（M3-A 完成，基线 774，下一步 M3-B1）。**新会话第一步：读本文 + AGENTS.md（自动加载）**。项目=Rhytido，用 Rust 净室重实现 Sollya 数值引擎。回复用**中文**。
 
 ## 1. 当前状态（务必先核对）
 
-- **M0–M2 已完成并验收、已推送 GitHub**；M3（语言+CLI）**方案已就绪、尚未启动**（等用户批准 M3-A）。
-- 最终测试基线：**workspace 569 全绿**（backend 269 / core 300），三门禁 `test`/`clippy -D warnings`/`fmt --check` EXIT=0。
-- 远端 `github.com/sine-zhow/Rhytido`，交接时 HEAD=`13ba871`。**开工前先 `git log --oneline -1` + `git status -sb` 核对实际状态，勿假设。**
-- crate 现状：仅 `rhytido-backend`(L0 facade, dashu) + `rhytido-core`(L1 AST/值/求值引擎 faithful/diff/taylor 都在 core)。架构规划的 eval/approx/lang/cli 等 crate 尚未拆分；**M3 需新增 `rhytido-lang`、`rhytido-cli`**。
+- **M0–M2 已完成并验收推送**；**M3-A 已完成并验收**（用户批准方案 C 后本会话完成）：ADR-9/10/11 定 D1/D2/D3；M3-A1 `rhytido-core::value`（Atom/Bound/Range/LangError，569→645，提交 ef37fa3）；M3-A2 新 crate `rhytido-lang`（SymbolTable/Value/Session 帧栈+设置骨架，645→774，提交 5a1b5fe）。两个 subagent 均一次成功、经 §7 协议独立取证。
+- 最终测试基线：**workspace 774 全绿**（backend 269 / core 376 / lang 129），三门禁 `test`/`clippy -D warnings`/`fmt --check` EXIT=0。
+- **下一步 = M3-B1**（用户已批准启动 M3-A 并授权引入 lalrpop；B1 派发即沿用既定工作流，派发前向用户简单确认）。**lalrpop 0.23.2 + 51 依赖包已联网预热进离线缓存**；B1 首步=加 build-dependency 后离线复验构建与 MSRV(≥1.86)。**proc/function 值表示延后 B1** 随 AST 补（理由：body 依赖语法树，见 ADR-9/M3-plan §3）。
+- 远端 `github.com/sine-zhow/Rhytido`，交接时 HEAD=M3-A 收口提交（代码在 `5a1b5fe`）。**开工前先 `git log --oneline -1` + `git status -sb` 核对实际状态，勿假设。**
+- crate 现状：`rhytido-backend`(L0 facade) + `rhytido-core`(L1 AST/值/求值引擎) + `rhytido-lang`(L4 骨架：解析/求值器尚未落地)。eval/approx/cli 等未拆分（求值引擎仍在 core）。
 - 参考项目 `reference/sollya`（gitignored、只读、**绝不提交/复制**）。
 
 ## 2. 必读文档（按序）
@@ -15,7 +16,7 @@
 1. `AGENTS.md` — 全部硬性规范（自动加载）。
 2. `docs/plan/M3-plan.md` — **下一里程碑任务方案**（A–F 拆分、文法三段、设计决策 D1/D2/D3）。
 3. `docs/plan/M2-acceptance.md` — M2 已交付内容（避免重做）。
-4. `docs/review/subagent-retrospective.md` — 12 批次 subagent 台账 + 四类上下文耗尽根因 + 已验证对策。
+4. `docs/review/subagent-retrospective.md` — 14 批次 subagent 台账 + 四类上下文耗尽根因 + 已验证对策。
 5. `docs/research/rust-numerical-optimization.md` — 派发引用的正确+高效 Rust 技巧。
 6. `docs/plan/03-roadmap.md`、`02-architecture.md`、`05-testing.md` — 路线/架构/测试分层。
 
@@ -23,7 +24,8 @@
 
 - **每个 pwsh 先加 PATH**：`$env:PATH = "C:\Users\zhouz\scoop\apps\rust\1.99.0\bin;" + $env:PATH`。
 - **cargo 一律 `--offline`**（沙箱断网，依赖已缓存）。Windows MSVC；**stable rustfmt**（无 nightly，勿用 `+nightly`）。
-- **沙箱受限模式拒绝外部程序管道输出**：`cargo/git ... 2>&1 | Select-Object` 触发 EPERM（`Access to the path '\\.\pipe\LOCAL\dotnet_...' is denied`）。**Workaround**：① `run_in_background=true` 跑 cargo 再 `job_output` 读；或 ② 对 pwsh 加 `sandbox_permissions="danger-full-access"`+中文 justification。**绝不在受限模式反复重试同一条被拒命令。**
+- **沙箱受限模式拒绝外部程序管道输出**：`cargo/git ... 2>&1 | Select-Object` 触发 EPERM（`Access to the path '\\.\pipe\LOCAL\dotnet_...' is denied`）。**Workaround**：① `run_in_background=true` 跑**纯命令（绝不带管道）**再 `job_output` 读——lead 层全程有效（含全量 cargo test/clippy）；② 对 pwsh 加 `sandbox_permissions="danger-full-access"`+中文 justification；③（subagent 环境变体，M3-A 实证）若直接调用也 EPERM，可用 `[System.Diagnostics.Process]::Start`（`UseShellExecute=false`、`CreateNoWindow=true`、**不设任何 RedirectStandard\***，继承句柄）拿输出与真实 ExitCode。**绝不在受限模式反复重试同一条被拒命令。**
+- **cargo 首次 quiet 全量跑约 4–5 分钟**：lead 门禁复跑用 `cargo test --workspace --offline -- --quiet`，输出仅每 target 计数行，便于逐层核对。
 - 文件操作用 harness 工具（read/write/edit/glob/grep）；编辑前先读；同文件多处编辑串行。
 
 ## 4. Git 推送配方（22 端口被阻，走官方 443）
@@ -53,7 +55,7 @@ git remote set-url origin git@github.com:sine-zhow/Rhytido.git   # 还原
 2. **探针调试黑洞**：探针 edit→run→error 循环 → 探针极简、>2–3 轮即弃用改真实测试。
 3. **测试追因无界**：同一 panic 反复 run→diagnose → 识别已知边界（如 dashu `precision cannot be 0`）针对性处理。
 4. **样板重复确认**：每轮冗长确认注入提醒（URL 纪律）吞噬上下文 → **极简响应，一句带过**（lead 自己也照做）。
-- 对策经 #9–#12 连续四次实证有效。**任务体量须匹配 subagent 上下文，过大拆小**（文法拆 B1/B2/B3 即此因）。
+- 对策经 #9–#14 连续六次实证有效（含 M3-A 两批次：规格以 ADR 承载 + 体量按模块切分，均一次通过独立验收）。**任务体量须匹配 subagent 上下文，过大拆小**（文法拆 B1/B2/B3 即此因）。
 
 ## 7. 硬性护栏（违反即停）
 
@@ -63,15 +65,16 @@ git remote set-url origin git@github.com:sine-zhow/Rhytido.git   # 还原
 - **语义契约不可优化掉**：动态作用域、error 一等值、符号回退、8 态质量证书。
 - 语义/表现分离；零全局状态（Context 显式穿线）；不可变+interning。
 
-## 8. 下一步：M3-A（待用户批准）
+## 8. 下一步：M3-B1（已扫清前置，派发前向用户确认一句即可）
 
-- 读 `docs/plan/M3-plan.md`。**M3-A**=值类型（list/string/bool/range/proc/error 一等值/void）+ 帧栈动态作用域 Context + 设置骨架；新增 `rhytido-lang` crate。
-- **三个设计决策需先定夺、必要时 ADR 升级用户**：D1 AST 扩展策略（core 子枚举 vs lang 独立 AST）、D2 值类型不可变表示+interning、D3 Context 帧栈/零全局。**先给方案供用户确认，再实现。**
-- **lalrpop 依赖**：加入 workspace 前先验证离线缓存可用 + MSRV(1.86) 兼容（M0 已 noting lalrpop 0.23）。
-- 参考语言行为已蒸馏于 M3-plan §2（parse/proc/3 解析模式/动态作用域/match）；确切文法由 M3-B 从参考公开行为蒸馏，不复制产生式。
+- 读 `docs/plan/M3-plan.md` §3（B1 行）与 §2（文法蒸馏口径）。**M3-B1** = ①首步：workspace 加 build-dependency lalrpop 0.23（**缓存已预热**，验证离线构建 + MSRV≥1.86，锁 Cargo.lock）；②随 AST 补 lang 的 proc/function 值表示（body=lang AST，M3-A2 已文档化延后理由）；③lexer + 数学表达式/常数/基函数/优先级文法 → AST；解析四类测试。
+- D1/D2/D3 **已定夺**（docs/adr/0009/0010/0011，用户批准方案 C），无需再做设计决策；core 值层（Atom）与 lang Session 帧栈已验收（基线 774）。
+- 文法蒸馏：从参考公开文档/行为蒸馏三解析模式（M3-plan §2），**不复制产生式表达**；确切入口/优先级以参考手册行为为准。
+- 夹具提醒（M3-A1 实证）：**相邻工作精度的超越函数值可能 canonical_parts 相同**（π@200==π@201）——精度相关断言以"值变化⇒身份变化"为准，勿写"精度不同⇒值不同"。
+- 台账事实（供回填格式参考）：M3-A 批次=#13/#14（subagent-retrospective §1），溯源=rhytido-core-value.md / rhytido-lang-m3a.md。
 
 ## 9. 快速自检清单（新会话开工）
 
-- [ ] `git log --oneline -1` / `git status -sb` 核对状态（预期 HEAD 13ba871 或更新、clean）。
-- [ ] PATH 前缀 + `cargo test --workspace --offline` 复跑确认 569 基线（用 §3 workaround）。
-- [ ] 读 M3-plan.md；向用户确认是否启动 M3-A 及 D1/D2/D3 取向。
+- [ ] `git log --oneline -1` / `git status -sb` 核对状态（预期 M3-A 收口提交之后、clean）。
+- [ ] PATH 前缀 + `cargo test --workspace --offline` 复跑确认 774 基线（用 §3 workaround）。
+- [ ] 读 M3-plan.md（A 已✅，看 B1 行）+ ADR-9；向用户确认一句即派发 M3-B1（lalrpop 引入首步复验）。

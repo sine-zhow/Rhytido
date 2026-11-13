@@ -32,7 +32,7 @@
 
 | 任务 | 内容 | 写作用域 | 依赖 |
 |---|---|---|---|
-| **M3-A** 值/Context 地基 | 值类型（list/string/bool/range/proc/error/void）+ 帧栈动态作用域 Context + 设置骨架；定 D1/D2/D3（ADR）；四类测试 | core + lang 骨架 | M2 |
+| **M3-A** ✅ 值/Context 地基（2026-11-13 完成） | 值类型（core 原子 Atom + lang Value/列表；**proc/function 表示延后 B1**——body 依赖语法树，行为解释器本属 M3-D）+ 帧栈动态作用域 Session + 设置骨架；D1/D2/D3 已定（ADR-9/10/11）；四类测试 | core + lang 骨架 | M2 |
 | **M3-B1** 词法+表达式文法 | lalrpop 接入 + lexer + 数学表达式/常数/基函数/优先级文法→AST；解析单测 | lang | A |
 | **M3-B2** 命令/语句文法 | 赋值/设置/print/块/过程语法文法；解析单测 | lang | B1 |
 | **M3-B3** match/控制流+迷你/内部模式 | 模式/控制流文法 + mini/internal 解析入口；解析单测 | lang | B2 |
