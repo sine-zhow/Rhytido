@@ -52,7 +52,7 @@
 
 ## 5. 启动检查单
 
-- [ ] M2 E1/E2/E3 验收推送完毕（workspace 基线锁定）。
-- [ ] D1/D2/D3 设计决策（M3-A 内定夺，必要时 ADR 升级人类）。
-- [ ] lalrpop 依赖加入 workspace（离线缓存可用性先验证；版本 MSRV 兼容）。
-- [ ] 参考语言行为用例蒸馏（parse/proc/match/动态作用域/设置）成测试夹具。
+- [x] M2 E1/E2/E3 验收推送完毕（workspace 基线锁定，569）。
+- [x] D1/D2/D3 设计决策已定夺（ADR-9/10/11，用户批准方案 C；M3-A 验收，基线 774）。
+- [x] lalrpop 依赖：0.23.2 已联网预热离线缓存并**离线构建复验**（探针全链编译 + 生成解析器跑通；实证 .lalrpop 需 `grammar;` 头）；本机 rustc 1.99 通过，MSRV 1.86 为计划既有声明。正式 build-dependency 加入 lang 属 B1 首步。
+- [ ] 参考语言行为用例蒸馏（parse/proc/match/动态作用域/设置）成测试夹具——随 B1/C 推进。

@@ -6,7 +6,7 @@
 
 - **M0–M2 已完成并验收推送**；**M3-A 已完成并验收**（用户批准方案 C 后本会话完成）：ADR-9/10/11 定 D1/D2/D3；M3-A1 `rhytido-core::value`（Atom/Bound/Range/LangError，569→645，提交 ef37fa3）；M3-A2 新 crate `rhytido-lang`（SymbolTable/Value/Session 帧栈+设置骨架，645→774，提交 5a1b5fe）。两个 subagent 均一次成功、经 §7 协议独立取证。
 - 最终测试基线：**workspace 774 全绿**（backend 269 / core 376 / lang 129），三门禁 `test`/`clippy -D warnings`/`fmt --check` EXIT=0。
-- **下一步 = M3-B1**（用户已批准启动 M3-A 并授权引入 lalrpop；B1 派发即沿用既定工作流，派发前向用户简单确认）。**lalrpop 0.23.2 + 51 依赖包已联网预热进离线缓存**；B1 首步=加 build-dependency 后离线复验构建与 MSRV(≥1.86)。**proc/function 值表示延后 B1** 随 AST 补（理由：body 依赖语法树，见 ADR-9/M3-plan §3）。
+- **下一步 = M3-B1**（用户已批准启动 M3-A 并授权引入 lalrpop；B1 派发即沿用既定工作流，派发前向用户简单确认）。**lalrpop 0.23.2 + 51 依赖包已联网预热进离线缓存，且离线复验已完成**（临时探针 crate：全链编译 + 由 .lalrpop 生成解析器并跑通解析测试，rustc 1.99，EXIT=0；探针已删。**实证：0.23 的 .lalrpop 文件需显式 `grammar;` 头，否则裸非终结定义报 "unexpected token"**——B1 文法落地直接沿用）。**proc/function 值表示延后 B1** 随 AST 补（理由：body 依赖语法树，见 ADR-9/M3-plan §3）。
 - 远端 `github.com/sine-zhow/Rhytido`，交接时 HEAD=M3-A 收口提交（代码在 `5a1b5fe`）。**开工前先 `git log --oneline -1` + `git status -sb` 核对实际状态，勿假设。**
 - crate 现状：`rhytido-backend`(L0 facade) + `rhytido-core`(L1 AST/值/求值引擎) + `rhytido-lang`(L4 骨架：解析/求值器尚未落地)。eval/approx/cli 等未拆分（求值引擎仍在 core）。
 - 参考项目 `reference/sollya`（gitignored、只读、**绝不提交/复制**）。
@@ -67,7 +67,7 @@ git remote set-url origin git@github.com:sine-zhow/Rhytido.git   # 还原
 
 ## 8. 下一步：M3-B1（已扫清前置，派发前向用户确认一句即可）
 
-- 读 `docs/plan/M3-plan.md` §3（B1 行）与 §2（文法蒸馏口径）。**M3-B1** = ①首步：workspace 加 build-dependency lalrpop 0.23（**缓存已预热**，验证离线构建 + MSRV≥1.86，锁 Cargo.lock）；②随 AST 补 lang 的 proc/function 值表示（body=lang AST，M3-A2 已文档化延后理由）；③lexer + 数学表达式/常数/基函数/优先级文法 → AST；解析四类测试。
+- 读 `docs/plan/M3-plan.md` §3（B1 行）与 §2（文法蒸馏口径）。**M3-B1** = ①首步：workspace 给 lang 加 build-dependency lalrpop 0.23（**缓存预热与离线构建复验均已完成**，锁 Cargo.lock 即可）；②随 AST 补 lang 的 proc/function 值表示（body=lang AST，M3-A2 已文档化延后理由）；③lexer + 数学表达式/常数/基函数/优先级文法 → AST；解析四类测试。**文法文件头实证：`.lalrpop` 需显式 `grammar;`。**
 - D1/D2/D3 **已定夺**（docs/adr/0009/0010/0011，用户批准方案 C），无需再做设计决策；core 值层（Atom）与 lang Session 帧栈已验收（基线 774）。
 - 文法蒸馏：从参考公开文档/行为蒸馏三解析模式（M3-plan §2），**不复制产生式表达**；确切入口/优先级以参考手册行为为准。
 - 夹具提醒（M3-A1 实证）：**相邻工作精度的超越函数值可能 canonical_parts 相同**（π@200==π@201）——精度相关断言以"值变化⇒身份变化"为准，勿写"精度不同⇒值不同"。
