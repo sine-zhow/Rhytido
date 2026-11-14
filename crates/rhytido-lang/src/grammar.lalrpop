@@ -1,57 +1,90 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Concrete-syntax grammar for Rhytido mathematical expressions.
+//! Concrete syntax for Rhytido: mathematical expressions and the statement
+//! layer built on top of them.
 //!
-//! This grammar parses a decimal/identifier expression source into the core
-//! interned AST (`rhytido_core::Expr`, interned to a `NodeId`). The `interner`
-//! state parameter is threaded through every action so nodes are interned as
-//! they are built; structurally identical sub-expressions therefore share one
-//! `NodeId` (hash-consing, ADR-1).
+//! Two entry points share this file and one interner:
 //!
-//! The precedence and associativity encoded here are chosen to be exactly the
-//! inverse of the canonical printer in `rhytido_core::print`, so that
-//! `parse ∘ print` is a fixpoint on printer-canonical strings (see the
-//! integration tests). The layering, lowest precedence first:
+//! - `Expr` (see [`crate::parse::parse_expr`]) is the identifier-free
+//!   mathematical grammar. Its precedence chain is the exact inverse of the
+//!   canonical printer in `rhytido_core::print`, so `parse ∘ print` is a
+//!   fixpoint on printer-canonical strings (see the integration tests), and
+//!   every node it builds is interned (hash-consing, ADR-1).
+//! - `Statements` (see [`crate::parse::parse_script`]) is the language layer:
+//!   statements, blocks, procedures, calls and the literals the mathematics has
+//!   no room for. Its expression chain `PExpr` mirrors `Expr` level for level,
+//!   and merges with it at the leaves through [`ProgramExpr::Math`]: an operator
+//!   whose operands are all mathematical is interned straight back into core
+//!   ([`BinaryOp::fuse`] / [`UnaryOp::fuse`]), so the pure-mathematics subset of
+//!   the two grammars produces *identical* node ids, while an operand carrying a
+//!   name keeps the operator at program level. The core `Expr` has no node that
+//!   stores a name — its `Variable` is the anonymous free variable — which is
+//!   precisely why `return n + 1;` cannot be a core expression (ADR-9,
+//!   `docs/research/sollya-language-b2.md` §10).
+//!
+//! The lexer is lalrpop's built-in one; whitespace is skipped automatically.
 //!
 //! 1. `+` / `-` (binary) — left associative
 //! 2. `*` / `/` — left associative
 //! 3. unary `-`
 //! 4. `^` — right associative
-//! 5. atoms: numbers, `pi`, `_x_`, `NaN`, base-function application, `(...)`
+//! 5. atoms: numbers, `pi`, `_x_`, `NaN`, base-function application, `(...)`,
+//!    and — at program level only — names, calls, strings, lists, procedures
 //!
-//! The lexer is lalrpop's built-in one; whitespace is skipped automatically.
+//! Deliberately *not* lexed here (distillation for later tasks, see
+//! `docs/research/sollya-language-b2.md` §8): base-prefix literals
+//! (`0x`/`0b`/`0o`), dashu's `@` scale marker, digit-grouping underscores, the
+//! `inf`/`infinity` spellings, interval brackets, indexed expressions, and the
+//! comparison/boolean operators.
 
 use rhytido_backend::BigFloat;
 use rhytido_core::{BaseFn, Expr, Interner, NodeId};
+use std::rc::Rc;
 use std::str::FromStr;
 
+use crate::ast::{
+    AssignOp, BinaryOp, Formal, MessagePolicy, Proc, ProgramExpr, Redirect, Stmt, UnaryOp,
+};
+use crate::parse::unescape;
+use crate::symbol::{SymbolId, SymbolTable};
+
 // The `'input` lifetime is implicit for a built-in lexer (no extern token
-// enum), so the grammar is declared without type parameters and the `interner`
-// state parameter is threaded straight into every action.
-grammar(interner: &mut Interner);
+// enum), so the grammar is declared without type parameters and the two state
+// parameters are threaded straight into every action: `interner` for the
+// mathematics, `symbols` for the names.
+grammar(interner: &mut Interner, symbols: &mut SymbolTable);
 
 // ---------------------------------------------------------------------------
 // Lexical structure.
 //
-// The built-in lexer matches the longest declared token, so the function and
-// reserved-word literals below need no explicit precedence block: a name that
-// is also a prefix of a longer name (e.g. `log` vs `log2`) resolves to the
-// longer one when the input continues that way, and to the shorter one
-// otherwise. Numeric literals come from the one regex in the `Num` rule; it
-// cannot match any letter-leading keyword, so it never collides with them.
+// The built-in lexer prefers the longest match, and breaks a tie by the
+// precedence declared here: the statement keywords in the `match` block win
+// outright, everything else the rules mention (the base-function names, `pi`,
+// `_x_`, `NaN`, the operators — the `_` catch-all) wins over the catch-all
+// identifier matcher in the `else` block. That ordering is what keeps
+// `print(...)` a keyword while `printer = 3;` is an assignment to a name, and
+// `sqrt` a function while `sine` is a name.
 //
-// There is no catch-all identifier token: an unknown identifier lexes as no
-// token at all and the lexer reports an unrecognized-token error, which is the
-// specified behavior (symbol fallback is a command-layer feature for B2+).
+// The identifier character class follows the reference's documented names: it
+// starts with an ASCII letter or an underscore and continues with letters,
+// digits or underscores. The stricter spelling in the manual ("starts with a
+// letter, continues with letters or digits") cannot cover the names that same
+// manual uses (`__argv`, `_x_`), so the wider class is taken and the discrepancy
+// recorded (`docs/research/sollya-language-b2.md` §3.1).
 //
-// Deliberately *not* lexed here (distillation for later tasks, see the task
-// report): base-prefix literals (`0x`/`0b`/`0o`), dashu's `@` scale marker,
-// digit-grouping underscores, and the `inf`/`infinity` spellings. `NaN` is the
-// one special-value spelling implemented, because the canonical printer emits
-// it and the round-trip contract requires accepting it back.
+// An unknown identifier is therefore a *token* now, which means `parse_expr`
+// rejects one as a parse error rather than a lexical error: the lexer is shared
+// by both entry points, and symbol fallback is an evaluator question (M3-C).
 // ---------------------------------------------------------------------------
 
+match {
+    "proc", "procedure", "return", "var", "print",
+} else {
+    r"[A-Za-z_][A-Za-z0-9_]*",
+    _,
+}
+
 // ---------------------------------------------------------------------------
-// Entry point and precedence chain.
+// Mathematical entry point and precedence chain (identifier-free).
 // ---------------------------------------------------------------------------
 
 /// Top-level expression: the additive (lowest-precedence) layer.
@@ -142,4 +175,185 @@ Fun: BaseFn = {
     "halfprecision" => BaseFn::HalfPrecision,
     "quad" => BaseFn::Quad,
     "doubleextended" => BaseFn::DoubleExtended,
+};
+
+// ---------------------------------------------------------------------------
+// Statement layer.
+//
+// Every statement is *terminated* by `;`, the final one included, which is the
+// form every public example uses; whether the last terminator may be dropped is
+// an open distillation question (`docs/research/sollya-language-b2.md` §1.2).
+// ---------------------------------------------------------------------------
+
+/// A script: a possibly empty sequence of terminated statements.
+pub Statements: Vec<Stmt> = (<Stmt> ";")*;
+
+/// One statement.
+Stmt: Stmt = {
+    Assign,
+    BlockStmt,
+    ProcedureStmt,
+    PrintStmt,
+    ExprStmt,
+};
+
+/// `target = value` / `target := value`, with an optional trailing `!` that
+/// asks the assignment not to report itself.
+Assign: Stmt = {
+    <t:Ident> "=" <v:PExpr> <q:Quiet?> => Stmt::assign(
+        t,
+        AssignOp::Plain,
+        v,
+        q.unwrap_or_default(),
+    ),
+    <t:Ident> ":=" <v:PExpr> <q:Quiet?> => Stmt::assign(
+        t,
+        AssignOp::Evaluated,
+        v,
+        q.unwrap_or_default(),
+    ),
+};
+
+/// A trailing `!` on an assignment: the silent form.
+Quiet: MessagePolicy = "!" => MessagePolicy::Suppress;
+
+/// A begin-end block, itself one statement. May open with declarations.
+BlockStmt: Stmt = "{" <d:DeclList*> <s:(<Stmt> ";")*> "}" => {
+    Stmt::block(d.into_iter().flatten().chain(s))
+};
+
+/// `var a, b, ...;` — a local declaration, only legal at the start of a block
+/// (which is what the `DeclList*` position in `BlockStmt` encodes).
+DeclList: Vec<Stmt> = "var" <names:Comma<Ident>> ";" => vec![Stmt::declare(names)];
+
+/// A bare expression used as a statement.
+ExprStmt: Stmt = <e:PExpr> => Stmt::expr_stmt(e);
+
+/// `procedure name(formals) { body }` — declare and assign in one statement, the
+/// documented abbreviation for `name = proc(formals) { body };`. Kept as its own
+/// statement rather than rewritten: deciding that the two are the same object is
+/// an evaluator question, not a parsing one.
+ProcedureStmt: Stmt = "procedure" <n:Ident> "(" <formals:Comma<Formal>> ")" <body:ProcBody> => {
+    Stmt::procedure(n, Rc::new(Proc::new(formals, body)))
+};
+
+/// `print(a, b, ...)` — the expressions are printed space-separated. The
+/// optional redirect names a file instead of the standard output.
+PrintStmt: Stmt = "print" "(" <args:Comma<PExpr>> ")" <sink:PrintSink?> => Stmt::Print {
+    args: Rc::from(args),
+    redirect: sink,
+};
+
+/// `> "file"` creates or overwrites, `>> "file"` appends. The file name is
+/// lexed as a string literal and unescaped here, so the tree carries the
+/// characters and not the source spelling
+/// (`docs/research/sollya-language-b2.md` §5.2).
+PrintSink: Redirect = {
+    ">" <file:StringLit> => Redirect::create(file),
+    ">>" <file:StringLit> => Redirect::append(file),
+};
+
+/// A string literal: anything between double quotes, with the documented escape
+/// sequences resolved. A raw newline inside the quotes is not a token, which is
+/// why an unterminated string surfaces as a lexical error.
+StringLit: Rc<str> = <s:r#""([^"\\\n]|\\.)*""#> => unescape(s).into();
+
+/// A procedure literal: an anonymous, first-class object. Defining one only
+/// parses the body — no interpretation, no type check
+/// (`docs/research/sollya-language-b2.md` §4.4).
+ProcLit: Proc = "proc" "(" <formals:Comma<Formal>> ")" <body:ProcBody> => {
+    Proc::new(formals, body)
+};
+
+/// One formal parameter: a bare name, or the variadic `name = ...` that collects
+/// every actual argument into a list and skips the arity check.
+Formal: Formal = {
+    <i:Ident> => Formal::single(i),
+    <i:Ident> "=" "..." => Formal::list(i),
+};
+
+/// A procedure body: declarations, then statements, then at most one `return`.
+/// The placement is the documented constraint — `return` is legal only at the
+/// end of the block used as a body, and only once
+/// (`docs/research/sollya-language-b2.md` §1.7). An absent `return` is left
+/// absent rather than filled in with an implicit `return void`, because that
+/// defaulting is evaluator and printer behaviour (M3-C, L6).
+ProcBody: Vec<Stmt> = "{" <d:DeclList*> <s:(<Stmt> ";")*> <r:ReturnStmt?> "}" => {
+    d.into_iter().flatten().chain(s).chain(r).collect()
+};
+
+/// `return expr;` — or a bare `return;`, whose meaning the evaluator settles.
+ReturnStmt: Stmt = "return" <v:PExpr?> ";" => Stmt::returning(v);
+
+/// One interned identifier.
+Ident: SymbolId = <s:r"[A-Za-z_][A-Za-z0-9_]*"> => symbols.intern(s);
+
+/// A comma-separated, optionally trailing-comma list of `T`.
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <last:T?> => {
+        v.extend(last);
+        v
+    },
+};
+
+// ---------------------------------------------------------------------------
+// Program-level expression chain: the mathematical chain extended at the atom
+// level with the constructs core has no node for.
+// ---------------------------------------------------------------------------
+
+/// Top-level program expression: the additive layer.
+PExpr: ProgramExpr = PSum;
+
+/// Precedence 1, left associative: `e + t`, `e - t`.
+PSum: ProgramExpr = {
+    <a:PSum> "+" <b:PProduct> => BinaryOp::Add.fuse(a, b, interner),
+    <a:PSum> "-" <b:PProduct> => BinaryOp::Sub.fuse(a, b, interner),
+    PProduct,
+};
+
+/// Precedence 2, left associative: `e * t`, `e / t`.
+PProduct: ProgramExpr = {
+    <a:PProduct> "*" <b:PUnary> => BinaryOp::Mul.fuse(a, b, interner),
+    <a:PProduct> "/" <b:PUnary> => BinaryOp::Div.fuse(a, b, interner),
+    PUnary,
+};
+
+/// Precedence 3: prefix unary negation, right associative via self-recursion.
+PUnary: ProgramExpr = {
+    "-" <a:PUnary> => UnaryOp::Neg.fuse(a, interner),
+    PPower,
+};
+
+/// Precedence 4, right associative: `b ^ e`. Same shape as the mathematical
+/// layer: the base is an atom, the exponent a unary term.
+PPower: ProgramExpr = {
+    <a:PAtom> "^" <b:PUnary> => BinaryOp::Pow.fuse(a, b, interner),
+    PAtom,
+};
+
+/// Precedence 5: the mathematical atoms, now joined by the language's own.
+PAtom: ProgramExpr = {
+    <n:Num> => ProgramExpr::Math(n),
+    "pi" => ProgramExpr::Math(interner.intern(Expr::Pi)),
+    "_x_" => ProgramExpr::Math(interner.intern(Expr::Variable)),
+    "NaN" => ProgramExpr::Math(interner.intern(Expr::Constant(BigFloat::NAN))),
+    <i:Ident> => ProgramExpr::Var(i),
+    // An application of a name: the callee is always a name here, because a
+    // procedure reached through an expression (`(myprocs[0])(5, 6)`) needs the
+    // indexing that this grammar does not have yet
+    // (`docs/research/sollya-language-b2.md` §8.1).
+    <i:Ident> "(" <args:Comma<PExpr>> ")" => ProgramExpr::Call {
+        callee: i,
+        args: Rc::from(args),
+    },
+    <s:StringLit> => ProgramExpr::StringLit(s),
+    "[|" <elements:Comma<PExpr>> "|]" => ProgramExpr::ListLit(Rc::from(elements)),
+    // Base-function application and grouping live here rather than delegating to
+    // the mathematical chain: this grammar is a separate LR automaton, so the
+    // two chains never share a state, and routing through `PExpr` is what lets
+    // `sqrt(n)` and `(n + 1) * 2` parse while a pure-mathematics group still
+    // interns to the node the `Expr` chain would have produced.
+    <f:Fun> "(" <a:PExpr> ")" => UnaryOp::Apply(f).fuse(a, interner),
+    "(" <a:PExpr> ")" => a,
+    <p:ProcLit> => ProgramExpr::ProcLit(Rc::new(p)),
 };

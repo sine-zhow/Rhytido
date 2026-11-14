@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Rhytido language layer (L4): composite values and session state.
+//! Rhytido language layer (L4): syntax trees, composite values, parsing and
+//! session state.
 //!
 //! This crate is the home, decided in ADR-9, for everything the language needs
 //! above the core value model but below the parser and evaluator:
@@ -9,6 +10,10 @@
 //!   numeric, string, range and error semantics keep a single definition.
 //!   Lists are reference-counted and immutable; modification rebuilds a value
 //!   instead of mutating one in place (AGENTS.md §3, "原地列表修改改为重建").
+//!   `Proc` and `Function` carry the captured syntax trees of [`ast`].
+//! - [`ast`] — the language's own syntax tree: statements, blocks, procedure
+//!   literals, program-level expressions whose mathematical leaves are core
+//!   [`rhytido_core::NodeId`]s (ADR-9). Produced by [`parse::parse_script`].
 //! - [`symbol::SymbolTable`] — per-session identifier interning. Identifiers
 //!   become [`symbol::SymbolId`] values so frame lookups compare integers;
 //!   the table belongs to a [`context::Session`], never to a global (ADR-11).
@@ -19,16 +24,14 @@
 //!
 //! ## What is deliberately *not* here yet
 //!
-//! ADR-9 reserves two further `Value` variants — `Proc` (anonymous, first-class
-//! procedure) and `Function` (a mathematical body plus its ranges) — and both
-//! are deferred. Neither can be represented without a syntax tree: a procedure
-//! value *is* a captured body, and a body is only meaningful as parsed
-//! structure. That structure is the product of M3-B1 (the AST), and the rules
-//! for *running* it belong to M3-D (the behavioural interpreter). Adding
-//! placeholder variants now would invent an AST shape for those tasks to
-//! retrofit, which is the kind of premature commitment the ADRs avoid. So this
-//! milestone carries the two variants the spec fixes — atom and list — and the
-//! session machinery they will be threaded through.
+//! [`Value::Proc`] and [`Value::Function`] are *representation*: they can be
+//! built, compared, hashed and stored in a frame, and nothing runs them. What a
+//! procedure checks when applied, how a function is evaluated over its range,
+//! whether a name in an expression is a variable or the free variable, and when
+//! `error` propagates are evaluator behaviours (M3-C/M3-D) to be pinned by
+//! reference fixtures. Control flow and pattern-matching syntax
+//! (`if`/`for`/`while`/`match`), the `mini` and `internal` parser modes, indexed
+//! expressions and the remaining literal notations are M3-B3.
 //!
 //! Printing is likewise absent: byte-level rendering of a `Value` is a
 //! presentation concern of L6 (AGENTS.md §3, 语义/表现分离; ADR-9 explicitly
@@ -56,12 +59,13 @@
 //! assert_eq!(session.text(name), Some("x"));
 //! ```
 
+pub mod ast;
 pub mod context;
 pub mod parse;
 pub mod symbol;
 pub mod value;
 
 pub use context::{DisplayMode, Frame, Session, Settings};
-pub use parse::{ParseError, parse_expr};
+pub use parse::{ParseError, parse_expr, parse_script};
 pub use symbol::{SymbolId, SymbolTable};
-pub use value::Value;
+pub use value::{Fun, Value};
