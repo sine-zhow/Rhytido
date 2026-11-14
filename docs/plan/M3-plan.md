@@ -34,7 +34,7 @@
 |---|---|---|---|
 | **M3-A** ✅ 值/Context 地基（2026-11-13 完成） | 值类型（core 原子 Atom + lang Value/列表；**proc/function 表示延后 B1**——body 依赖语法树，行为解释器本属 M3-D）+ 帧栈动态作用域 Session + 设置骨架；D1/D2/D3 已定（ADR-9/10/11）；四类测试 | core + lang 骨架 | M2 |
 | **M3-B1** ✅ 词法+表达式文法（2026-11-13 完成，f51bb59） | lalrpop 0.23.2 接入 + **内置 lexer** + 数学表达式/常数/基函数/优先级文法 → core AST；parse_expr+ParseError；往返集成测试。**proc/function 值表示实际落位 B2**（其 body=命令/过程 AST，属 B2 产物；B1 仅数学文法，与行内"表达式文法"范围一致） | lang | A |
-| **M3-B2** 命令/语句文法 | 赋值/设置/print/块/过程语法文法 + **语句/proc AST 与 Value::Proc/Function 表示落地**（ADR-9：body 需语法树，原拟 B1、实归 B2）；解析单测 | lang | B1 |
+| **M3-B2** ✅ 命令/语句文法（2026-11-14 完成，2d76ccd；subagent 收尾截断、lead 接管收口） | 赋值/设置/print/块/过程语法文法 + 语句/proc AST 与 Value::Proc/Function 表示落地；蒸馏文档 sollya-language-b2.md（三级置信+未决移交） | lang | B1 |
 | **M3-B3** match/控制流+迷你/内部模式 | 模式/控制流文法 + mini/internal 解析入口；解析单测 | lang | B2 |
 | **M3-C** 动态作用域求值器 | 表达式调度 core 引擎、命令求值、变量查找、error 传播、符号回退；语义测试 | lang | B3 |
 | **M3-D** match + proc/变长 | match 解释器（字符串/列表切割）+ proc 应用/变长/return/void；语义测试 | lang | C |
@@ -60,6 +60,23 @@
 - **常量字面量精度政策**：backend FromStr 取 `max(165, digits·10/3+1)`，打印 51 位 → 非二进十进制经 print→parse 的 NodeId 不恒等（值级恒等已测）。B1 裁决：不擅改 core；求值层如何规范化常量精度，随 **M3-C** 参考行为蒸馏定夺（涉语义契约，必要时 ADR 升级人类）。
 - 打印器左嵌套幂非单射：`(a^b)^c` 打印为 `a^b^c`，parse 归右结合（典范性无碍）；若需修 core 打印器加括号，**先蒸馏参考打印行为**再动（表现层属字节级兼容域）。
 
+### 3.2 B2 实证与接管记录（2026-11-14，lead 验收时录）
+
+**B2 文法/语言事实**（B3/C 复用）：语句全部 `;` 终止（末条可省性=待验证）；list 字面量
+`[|..|]`；赋值 `=`（存表达式）/`:=`（求值后存）+ 后缀 `!`（静默）AST 均保留、语义归 C；
+`var` 声明仅块首（文法位置强制）；`print` 支持 `>`/`>>` 文件重定向；`return` 限过程体尾；
+proc 变长形参写作 `name = ...`；`procedure` 缩写保留独立节点。双链架构：PExpr 与 Expr 为
+**独立 LR 自动机**，`BinaryOp/UnaryOp::fuse` 在纯数学子树降级 intern（与 parse_expr 得同一
+NodeId），含名字子树留在程序层——设置名/标识符统一 Var 引用，不预扩记号集。
+`> 与比较算符冲突`、下标/`@` 摊开、进制字面量等见蒸馏文档 §8（B3 起领）。
+
+**lalrpop 追加实证**：match 块关键字优先+最长匹配可让保留字与普通标识符共存
+（`printer`/`sine` 不被切碎）；grammar 多状态参数（interner+symbols）可用。
+
+**流程教训（复盘 #16/L6）**：subagent 以 clippy→fmt 顺序收尾、**test 门禁从未跑穿**即截断
+终止（clippy 不检查 doctest 与测试输入正确性）。对策（已入 B3+ 派发模板）：三门禁顺序改为
+**test 先跑穿（含 doctest）→ clippy → fmt**；结束判据加"workspace test 全绿并逐 target 报数"。
+
 ## 4. 调度与验收
 
 - **串行**：A→B1→B2→B3→C→D→E→F（共享 lang 写作用域与 target 锁）。每任务 lead 按 §7 验收协议（git 取证→分层重计数→三门禁→关键实现抽查）后推送，再派下一个。
@@ -71,4 +88,4 @@
 - [x] M2 E1/E2/E3 验收推送完毕（workspace 基线锁定，569）。
 - [x] D1/D2/D3 设计决策已定夺（ADR-9/10/11，用户批准方案 C；M3-A 验收，基线 774）。
 - [x] lalrpop 依赖：0.23.2 已联网预热离线缓存并**离线构建复验**（探针全链编译 + 生成解析器跑通；实证 .lalrpop 需 `grammar;` 头）；本机 rustc 1.99 通过，MSRV 1.86 为计划既有声明。正式 build-dependency 加入 lang 属 B1 首步。
-- [ ] 参考语言行为用例蒸馏（parse/proc/match/动态作用域/设置）成测试夹具——随 B1/C 推进。
+- [x] 参考语言行为蒸馏首批落档：`docs/research/sollya-language-b2.md`（B2，公开帮助页/示例为源，三级置信+§8 未决移交清单）；match/控制流/动态作用域语义夹具随 B3/C 蒸馏。

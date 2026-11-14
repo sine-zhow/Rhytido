@@ -1,15 +1,15 @@
 # 会话交接 · Rhytido（新会话 Agent 快速上手）
 
-> 2026-11-13 由上一会话 lead 撰写；同日由本会话 lead 两次更新（M3-A 完成 → M3-B1 完成；现基线 822，下一步 M3-B2）。**新会话第一步：读本文 + AGENTS.md（自动加载）**。项目=Rhytido，用 Rust 净室重实现 Sollya 数值引擎。回复用**中文**。
+> 2026-11-13 由上一会话 lead 撰写；2026-11-13/14 由本会话 lead 三次更新（M3-A → M3-B1 → M3-B2 完成；现基线 942，下一步 M3-B3）。**新会话第一步：读本文 + AGENTS.md（自动加载）**。项目=Rhytido，用 Rust 净室重实现 Sollya 数值引擎。回复用**中文**。
 
 ## 1. 当前状态（务必先核对）
 
-- **M0–M2 已验收推送**；**M3-A、M3-B1 已验收**：M3-A=ADR-9/10/11 + core `value`(Atom, ef37fa3) + `rhytido-lang`(SymbolTable/Value/Session 帧栈, 5a1b5fe)；**M3-B1=lalrpop 0.23.2 接入 + 数学表达式文法 → core AST（`parse_expr`/`ParseError`，f51bb59）**，往返契约以已验收打印器为锚、非二进小数按值级往返（精度政策归 M3-C）。三批次 subagent 均一次成功、经 §7 协议独立取证。
-- 最终测试基线：**workspace 822 全绿**（backend 269 / core 376 / lang 177），三门禁 `test`/`clippy -D warnings`/`fmt --check` EXIT=0。
-- **下一步 = M3-B2**（命令/语句文法 + 语句/proc AST + `Value::Proc`/`Value::Function` 表示落地；派发前向用户确认一句）。**lalrpop 已在 workspace（build-dep + lexer feature），B2 无引入工作量**。
-- **B2/B3 必复用实证**（全量见 M3-plan §3.1）：`.lalrpop` 需显式 `grammar;` 头；内置 lexer 禁 `'input` 生命周期；生成码 `#[allow(missing_docs, clippy::all, unused_imports, dead_code)]`；动作避免 turbofish；空白-only 输入 EOF location=最后 token 末尾偏移（无 token 时 0）。
-- 远端 `github.com/sine-zhow/Rhytido`，交接时 HEAD=M3-B1 收口提交（代码在 `f51bb59`）。**开工前先 `git log --oneline -1` + `git status -sb` 核对实际状态，勿假设。**
-- crate 现状：`rhytido-backend`(L0 facade) + `rhytido-core`(L1 AST/值/求值引擎) + `rhytido-lang`(L4：值/Session 帧栈 + **数学表达式解析器已落地**；命令/控制流文法待 B2/B3，求值器待 C)。eval/approx/cli 等未拆分（求值引擎仍在 core）。
+- **M0–M2 已验收推送**；**M3-A、M3-B1、M3-B2 已验收**：M3-A=ADR-9/10/11 + core `value`(Atom, ef37fa3) + `rhytido-lang`(SymbolTable/Value/Session 帧栈, 5a1b5fe)；M3-B1=lalrpop 0.23.2 接入 + 数学表达式文法 → core AST（`parse_expr`，f51bb59）；**M3-B2=语句文法（赋值/`:=`/`!`、var 块、print 重定向、proc/procedure、调用、`[|..|]`、串转义）+ ast 模块 + `Value::Proc`/`Function` 表示 + `parse_script` 双链融合 + 蒸馏文档 `docs/research/sollya-language-b2.md`（2d76ccd；subagent 收尾前截断、lead 最小修接管收口，复盘 #16——新对策=门禁顺序 test 先跑穿，M3-plan §3.2）**。#13–#16 四批次零丢失、接管一次（低成本）。
+- 最终测试基线：**workspace 942 全绿**（backend 269 / core 376 / lang 297），三门禁 `test`/`clippy -D warnings`/`fmt --check` EXIT=0。
+- **下一步 = M3-B3**（控制流/match 文法 + mini/internal 双解析模式入口；文法蒸馏续用公开帮助页，`>` 与比较算符冲突等 B3 起领清单见蒸馏文档 §8）。**派发时必带 M3-plan §3.1/§3.2 全部实证与"test 先行跑穿"条款**。
+- **B3 必复用实证**（全量见 M3-plan §3.1/§3.2）：`.lalrpop` 需显式 `grammar;` 头；内置 lexer 禁 `'input` 生命周期；生成码 `#[allow(missing_docs, clippy::all, unused_imports, dead_code)]`；动作避免 turbofish；match 块可实现关键字优先+最长匹配；多状态参数（interner+symbols）可用；**派发模板新条款：门禁顺序 test 先跑穿（含 doctest）→ clippy → fmt**。
+- 远端 `github.com/sine-zhow/Rhytido`，交接时 HEAD=M3-B2 收口提交（代码在 `2d76ccd`）。**开工前先 `git log --oneline -1` + `git status -sb` 核对实际状态，勿假设。**
+- crate 现状：`rhytido-backend`(L0 facade) + `rhytido-core`(L1 AST/值/求值引擎) + `rhytido-lang`(L4：值(含 Proc/Function 表示)/Session 帧栈/ast 语句树/**数学+语句双层解析器**；控制流与 match 文法及 mini/internal 模式待 B3，求值器待 C)。eval/approx/cli 等未拆分（求值引擎仍在 core）。
 - 参考项目 `reference/sollya`（gitignored、只读、**绝不提交/复制**；B1 未读 parser.y/lexer 源码，往返锚=自有打印器先例 + 手册级公开行为）。
 
 ## 2. 必读文档（按序）
@@ -17,7 +17,7 @@
 1. `AGENTS.md` — 全部硬性规范（自动加载）。
 2. `docs/plan/M3-plan.md` — **下一里程碑任务方案**（A–F 拆分、文法三段、设计决策 D1/D2/D3）。
 3. `docs/plan/M2-acceptance.md` — M2 已交付内容（避免重做）。
-4. `docs/review/subagent-retrospective.md` — 15 批次 subagent 台账 + 四类上下文耗尽根因 + 已验证对策。
+4. `docs/review/subagent-retrospective.md` — 16 批次 subagent 台账 + 四类上下文耗尽根因 + 已验证对策。
 5. `docs/research/rust-numerical-optimization.md` — 派发引用的正确+高效 Rust 技巧。
 6. `docs/plan/03-roadmap.md`、`02-architecture.md`、`05-testing.md` — 路线/架构/测试分层。
 
@@ -56,7 +56,7 @@ git remote set-url origin git@github.com:sine-zhow/Rhytido.git   # 还原
 2. **探针调试黑洞**：探针 edit→run→error 循环 → 探针极简、>2–3 轮即弃用改真实测试。
 3. **测试追因无界**：同一 panic 反复 run→diagnose → 识别已知边界（如 dashu `precision cannot be 0`）针对性处理。
 4. **样板重复确认**：每轮冗长确认注入提醒（URL 纪律）吞噬上下文 → **极简响应，一句带过**（lead 自己也照做）。
-- 对策经 #9–#15 连续七次实证有效（含 M3-A 两批次与 M3-B1：规格以 ADR/派发提示承载 + 体量按模块切分，均一次通过独立验收）。**任务体量须匹配 subagent 上下文，过大拆小**（文法拆 B1/B2/B3 即此因；B1 首次接 lalrpop 亦一次成功，实证 §3.1 已归档）。
+- 对策经 #9–#15 连续七次实证有效（含 M3-A 两批次与 M3-B1：规格以 ADR/派发提示承载 + 体量按模块切分，均一次通过独立验收）。**任务体量须匹配 subagent 上下文，过大拆小**（文法拆 B1/B2/B3 即此因；B1 首次接 lalrpop 亦一次成功，实证 §3.1 已归档）。#16（M3-B2）复发的"收尾阶段终止"新病根=**门禁顺序**（clippy 不查 doctest/测试输入，test 未跑穿即收尾）→ 对策固化 M3-plan §3.2：test 先跑穿再收，B3+ 派发模板必含。
 
 ## 7. 硬性护栏（违反即停）
 
@@ -66,17 +66,17 @@ git remote set-url origin git@github.com:sine-zhow/Rhytido.git   # 还原
 - **语义契约不可优化掉**：动态作用域、error 一等值、符号回退、8 态质量证书。
 - 语义/表现分离；零全局状态（Context 显式穿线）；不可变+interning。
 
-## 8. 下一步：M3-B2（前置已扫清，派发前向用户确认一句即可）
+## 8. 下一步：M3-B3（前置已扫清，派发前向用户确认一句即可）
 
-- 读 `docs/plan/M3-plan.md` §3（B2 行 + **§3.1 B1 实证与未决项**）。**M3-B2** = 赋值/设置/print/块/过程语法文法 → 语句 AST + **`Value::Proc`/`Value::Function` 表示落地**（ADR-9：body 需语法树，原拟 B1、实归 B2）；解析四类测试。**文法文件头/lexer feature/生成码 allow 等 lalrpop 实证全在 M3-plan §3.1，直接复用勿再踩。**
-- lalrpop 0.23.2 已在 workspace（build-dep + lalrpop-util lexer feature）；B2 无依赖引入工作量。
-- 文法蒸馏：命令语法形态从参考**公开手册**蒸馏（M3-plan §2 口径），**不复制产生式表达**；proc 定义时仅解析、不类型检查的行为规格随 B2 钉。
-- 未决蒸馏项（**勿臆测实现**，M3-plan §3.1 全列）：进制/@比例/下划线字面量、inf 拼写、**常量精度政策归 M3-C**、打印器左嵌套幂非单射（改 core 打印器前必须先蒸馏参考打印行为）。
+- 读 `docs/plan/M3-plan.md` §3（B3 行 + **§3.1/§3.2 全部实证**）与蒸馏文档 `docs/research/sollya-language-b2.md` §8（未决移交清单：`>` 与比较算符冲突消解、下标/`@` 摊开、进制字面量、末条分号可省性等——**B3 起领**）。**M3-B3** = 控制流/match 文法 + mini/internal 双解析模式入口；解析四类测试。
+- 文法蒸馏：继续用公开帮助页/示例（禁读 .y/.l/.c/.h），逐条标置信级；match 语义（字符串/列表切割）按 M3-plan §2 口径蒸馏。**常量精度政策归 M3-C**（B3 不动 core）。
+- **B3+ 派发模板新条款（#16 教训）**：三门禁顺序 **test 先跑穿（含 doctest）→ clippy → fmt**，结束判据加"workspace test 全绿并逐 target 报数"。
+- 现有文法规模：grammar.lalrpop 359 行（数学 Expr 链 + 语句 Statements 链双自动机），ast.rs 1081 行；B3 在同一文件续扩，沿用 fuse 降级 intern 模式与关键字优先 match 块。
 - 夹具提醒（M3-A1 实证）：**相邻工作精度的超越函数值可能 canonical_parts 相同**（π@200==π@201）——精度相关断言以"值变化⇒身份变化"为准，勿写"精度不同⇒值不同"。
-- 台账事实（供回填格式参考）：M3 批次=#13/#14/#15（subagent-retrospective §1），溯源=rhytido-core-value.md / rhytido-lang-m3a.md / rhytido-lang-parser.md。
+- 台账事实（供回填格式参考）：M3 批次=#13–#16（subagent-retrospective §1），溯源=rhytido-core-value.md / rhytido-lang-m3a.md / rhytido-lang-parser.md / rhytido-lang-ast-b2.md。
 
 ## 9. 快速自检清单（新会话开工）
 
-- [ ] `git log --oneline -1` / `git status -sb` 核对状态（预期 M3-B1 收口提交之后、clean）。
-- [ ] PATH 前缀 + `cargo test --workspace --offline` 复跑确认 822 基线（用 §3 workaround）。
-- [ ] 读 M3-plan.md（A/B1 已✅）§3.1 与 B2 行；向用户确认一句即派发 M3-B2。
+- [ ] `git log --oneline -1` / `git status -sb` 核对状态（预期 M3-B2 收口提交之后、clean）。
+- [ ] PATH 前缀 + `cargo test --workspace --offline` 复跑确认 942 基线（用 §3 workaround）。
+- [ ] 读 M3-plan §3.1/§3.2 与蒸馏文档 §8；向用户确认一句即派发 M3-B3。
